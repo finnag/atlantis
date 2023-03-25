@@ -86,6 +86,8 @@ type ProjectContext struct {
 	User models.User
 	// Verbose is true when the user would like verbose output.
 	Verbose bool
+	// Quick is true when we want a quick plan
+	Quick bool
 	// Workspace is the Terraform workspace this project is in. It will always
 	// be set.
 	Workspace string
