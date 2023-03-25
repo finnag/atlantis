@@ -173,13 +173,17 @@ func (p *ProjectOutputWrapper) updateProjectPRStatus(commandName command.Name, c
 	// Create a PR status to track project's plan status. The status will
 	// include a link to view the progress of atlantis plan command in real
 	// time
-	if err := p.JobURLSetter.SetJobURLWithStatus(ctx, commandName, models.PendingCommitStatus, nil); err != nil {
-		ctx.Log.Err("updating project PR status", err)
+	if !ctx.Quick {
+		if err := p.JobURLSetter.SetJobURLWithStatus(ctx, commandName, models.PendingCommitStatus, nil); err != nil {
+			ctx.Log.Err("updating project PR status", err)
+		}
 	}
 
 	// ensures we are differentiating between project level command and overall command
 	result := execute(ctx)
-
+	if ctx.Quick {
+		return result
+	}
 	if result.Error != nil || result.Failure != "" {
 		if err := p.JobURLSetter.SetJobURLWithStatus(ctx, commandName, models.FailedCommitStatus, &result); err != nil {
 			ctx.Log.Err("updating project PR status", err)

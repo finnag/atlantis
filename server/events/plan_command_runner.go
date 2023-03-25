@@ -180,20 +180,24 @@ func (p *PlanCommandRunner) run(ctx *command.Context, cmd *CommentCommand) {
 		ctx.Log.Warn("unable to get pull request status: %s. Continuing with mergeable and approved assumed false", err)
 	}
 
-	if p.DiscardApprovalOnPlan {
-		if err = p.pullUpdater.VCSClient.DiscardReviews(baseRepo, pull); err != nil {
-			ctx.Log.Err("failed to remove approvals: %s", err)
+	if !cmd.Quick {
+		if p.DiscardApprovalOnPlan {
+			if err = p.pullUpdater.VCSClient.DiscardReviews(baseRepo, pull); err != nil {
+				ctx.Log.Err("failed to remove approvals: %s", err)
+			}
 		}
-	}
 
-	if err = p.commitStatusUpdater.UpdateCombined(baseRepo, pull, models.PendingCommitStatus, command.Plan); err != nil {
-		ctx.Log.Warn("unable to update commit status: %s", err)
+		if err = p.commitStatusUpdater.UpdateCombined(baseRepo, pull, models.PendingCommitStatus, command.Plan); err != nil {
+			ctx.Log.Warn("unable to update commit status: %s", err)
+		}
 	}
 
 	projectCmds, err := p.prjCmdBuilder.BuildPlanCommands(ctx, cmd)
 	if err != nil {
-		if statusErr := p.commitStatusUpdater.UpdateCombined(ctx.Pull.BaseRepo, ctx.Pull, models.FailedCommitStatus, command.Plan); statusErr != nil {
-			ctx.Log.Warn("unable to update commit status: %s", statusErr)
+		if !cmd.Quick {
+			if statusErr := p.commitStatusUpdater.UpdateCombined(ctx.Pull.BaseRepo, ctx.Pull, models.FailedCommitStatus, command.Plan); statusErr != nil {
+				ctx.Log.Warn("unable to update commit status: %s", statusErr)
+			}
 		}
 		p.pullUpdater.updatePull(ctx, cmd, command.Result{Error: err})
 		return
@@ -201,7 +205,7 @@ func (p *PlanCommandRunner) run(ctx *command.Context, cmd *CommentCommand) {
 
 	if len(projectCmds) == 0 && p.SilenceNoProjects {
 		ctx.Log.Info("determined there was no project to run plan in")
-		if !p.silenceVCSStatusNoProjects {
+		if !cmd.Quick && !p.silenceVCSStatusNoProjects {
 			if cmd.IsForSpecificProject() {
 				// With a specific plan, just reset the status so it's not stuck in pending state
 				pullStatus, err := p.pullStatusFetcher.GetPullStatus(pull)
@@ -237,7 +241,7 @@ func (p *PlanCommandRunner) run(ctx *command.Context, cmd *CommentCommand) {
 
 	// if the plan is generic, new plans will be generated based on changes
 	// discard previous plans that might not be relevant anymore
-	if !cmd.IsForSpecificProject() {
+	if !cmd.Quick && !cmd.IsForSpecificProject() {
 		ctx.Log.Debug("deleting previous plans and locks")
 		p.deletePlans(ctx)
 		_, err = p.lockingLocker.UnlockByPull(baseRepo.FullName, pull.Num)
@@ -255,7 +259,7 @@ func (p *PlanCommandRunner) run(ctx *command.Context, cmd *CommentCommand) {
 		result = runProjectCmds(projectCmds, p.prjCmdRunner.Plan)
 	}
 
-	if p.autoMerger.automergeEnabled(projectCmds) && result.HasErrors() {
+	if !cmd.Quick && p.autoMerger.automergeEnabled(projectCmds) && result.HasErrors() {
 		ctx.Log.Info("deleting plans because there were errors and automerge requires all plans succeed")
 		p.deletePlans(ctx)
 		result.PlansDeleted = true
@@ -266,20 +270,22 @@ func (p *PlanCommandRunner) run(ctx *command.Context, cmd *CommentCommand) {
 		cmd,
 		result)
 
-	pullStatus, err := p.dbUpdater.updateDB(ctx, pull, result.ProjectResults)
-	if err != nil {
-		ctx.Log.Err("writing results: %s", err)
-		return
-	}
+	if !cmd.Quick {
+		pullStatus, err := p.dbUpdater.updateDB(ctx, pull, result.ProjectResults)
+		if err != nil {
+			ctx.Log.Err("writing results: %s", err)
+			return
+		}
 
-	p.updateCommitStatus(ctx, pullStatus)
+		p.updateCommitStatus(ctx, pullStatus)
 
-	// Runs policy checks step after all plans are successful.
-	// This step does not approve any policies that require approval.
-	if len(result.ProjectResults) > 0 &&
-		!(result.HasErrors() || result.PlansDeleted) {
-		ctx.Log.Info("Running policy check for %s", cmd.String())
-		p.policyCheckCommandRunner.Run(ctx, policyCheckCmds)
+		// Runs policy checks step after all plans are successful.
+		// This step does not approve any policies that require approval.
+		if len(result.ProjectResults) > 0 &&
+			!(result.HasErrors() || result.PlansDeleted) {
+			ctx.Log.Info("Running policy check for %s", cmd.String())
+			p.policyCheckCommandRunner.Run(ctx, policyCheckCmds)
+		}
 	}
 }
 
