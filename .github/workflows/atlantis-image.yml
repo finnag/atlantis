@@ -12,6 +12,10 @@ on:
       - 'Dockerfile'
       - 'docker-entrypoint.sh'
       - '.github/workflows/atlantis-image.yml'
+      - '**.go'
+      - 'go.*'
+      - 'yarn.lock'
+      - 'package.json'
   workflow_dispatch:
 
 concurrency:
@@ -27,8 +31,8 @@ jobs:
     env:
       # Set docker repo to either the fork or the main repo where the branch exists
       DOCKER_REPO: ghcr.io/${{ github.repository }}
-      # Push if not a pull request or this is a fork
-      PUSH: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository }}
+      # Push if not a pull request and references the main branch
+      PUSH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
 
     steps:
     - uses: actions/checkout@v3
@@ -63,7 +67,7 @@ jobs:
         images: |
           ${{ env.DOCKER_REPO }}
         labels: |
-          org.opencontainers.image.authors="Anubhav Mishra, Luke Kysow"
+          org.opencontainers.image.authors="@runatlantis Github Org"
           org.opencontainers.image.licenses=Apache-2.0
         tags: |
           # semver
@@ -71,9 +75,9 @@ jobs:
           type=semver,pattern={{version}},prefix=v,enable=${{ matrix.image_type == 'alpine' }}
           type=semver,pattern={{major}}.{{minor}},prefix=v,suffix=${{ env.SUFFIX }}
           # dev
-          type=raw,value=dev,suffix=${{ env.SUFFIX }}-{{ sha }}
-          type=raw,event=push,value=dev,enable=${{ github.ref == format('refs/heads/{0}', 'main') && matrix.image_type == 'alpine' }},suffix=
           type=raw,event=push,value=dev,enable={{is_default_branch}},suffix=${{ env.SUFFIX }}
+          type=raw,event=push,value=dev,enable={{is_default_branch}},suffix=${{ env.SUFFIX }}-{{ sha }}
+          type=raw,event=push,value=dev,enable=${{ github.ref == format('refs/heads/{0}', 'main') && matrix.image_type == 'alpine' }},suffix=
           # prerelease
           type=raw,event=tag,value=prerelease-latest,enable=${{ startsWith(github.ref, 'refs/tags/') && contains(github.ref, 'pre') && matrix.image_type == 'alpine' }},suffix=
           type=raw,event=tag,value=prerelease-latest,enable=${{ startsWith(github.ref, 'refs/tags/') && contains(github.ref, 'pre') }},suffix=${{ env.SUFFIX }}
@@ -93,22 +97,6 @@ jobs:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-
-    # Publish dev image to container registry
-    - name: Build and push atlantis:dev${{ env.IMAGE_SUFFIX }} image
-      if: ${{ contains(fromJson('["push", "pull_request"]'), github.event_name) }}
-      uses: docker/build-push-action@v3
-      with:
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-        context: .
-        platforms: linux/arm64/v8,linux/amd64,linux/arm/v7
-        push: ${{ github.event_name != 'pull_request' }}
-        tags: |
-          ghcr.io/${{ github.repository_owner }}/atlantis:dev${{ env.IMAGE_SUFFIX }}
-          ghcr.io/${{ github.repository_owner }}/atlantis:dev-${{ matrix.image_type }}
-        target: ${{ matrix.image_type }}
-        labels: ${{ steps.meta.outputs.labels }}
 
     # Publish release to container registry
     - name: Populate release version

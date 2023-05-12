@@ -21,7 +21,7 @@ import (
 	"strings"
 
 	"github.com/go-playground/validator/v10"
-	"github.com/google/go-github/v50/github"
+	"github.com/google/go-github/v52/github"
 	"github.com/mcdafydd/go-azuredevops/azuredevops"
 	"github.com/pkg/errors"
 	"github.com/runatlantis/atlantis/server/events/command"
@@ -119,6 +119,10 @@ type CommentCommand struct {
 	ProjectName string
 	// Quick is true if we want to run a quick plan with no locks and no refresh
 	Quick bool
+	// PolicySet is the name of a policy set to run an approval on.
+	PolicySet string
+	// ClearPolicyApproval is true if approvals should be cleared out for specified policies.
+	ClearPolicyApproval bool
 }
 
 // IsForSpecificProject returns true if the command is for a specific dir, workspace
@@ -150,11 +154,11 @@ func (c CommentCommand) IsAutoplan() bool {
 
 // String returns a string representation of the command.
 func (c CommentCommand) String() string {
-	return fmt.Sprintf("command=%q verbose=%t dir=%q workspace=%q project=%q flags=%q", c.Name.String(), c.Verbose, c.RepoRelDir, c.Workspace, c.ProjectName, strings.Join(c.Flags, ","))
+	return fmt.Sprintf("command=%q verbose=%t dir=%q workspace=%q project=%q policyset=%q, clear-policy-approval=%t, flags=%q", c.Name.String(), c.Verbose, c.RepoRelDir, c.Workspace, c.ProjectName, c.PolicySet, c.ClearPolicyApproval, strings.Join(c.Flags, ","))
 }
 
 // NewCommentCommand constructs a CommentCommand, setting all missing fields to defaults.
-func NewCommentCommand(repoRelDir string, flags []string, name command.Name, subName string, verbose, autoMergeDisabled bool, workspace string, project string, quick bool) *CommentCommand {
+func NewCommentCommand(repoRelDir string, flags []string, name command.Name, subName string, verbose, autoMergeDisabled bool, workspace string, project string, quick bool, policySet string, clearPolicyApproval bool) *CommentCommand {
 	// If repoRelDir was empty we want to keep it that way to indicate that it
 	// wasn't specified in the comment.
 	if repoRelDir != "" {
@@ -164,15 +168,17 @@ func NewCommentCommand(repoRelDir string, flags []string, name command.Name, sub
 		}
 	}
 	return &CommentCommand{
-		RepoRelDir:        repoRelDir,
-		Flags:             flags,
-		Name:              name,
-		SubName:           subName,
-		Verbose:           verbose,
-		Workspace:         workspace,
-		AutoMergeDisabled: autoMergeDisabled,
-		ProjectName:       project,
-		Quick:             quick,
+		RepoRelDir:          repoRelDir,
+		Flags:               flags,
+		Name:                name,
+		SubName:             subName,
+		Verbose:             verbose,
+		Workspace:           workspace,
+		AutoMergeDisabled:   autoMergeDisabled,
+		ProjectName:         project,
+		Quick:               quick,
+		PolicySet:           policySet,
+		ClearPolicyApproval: clearPolicyApproval,
 	}
 }
 
