@@ -162,7 +162,11 @@ type ProjectOutputWrapper struct {
 }
 
 func (p *ProjectOutputWrapper) Plan(ctx command.ProjectContext) command.ProjectResult {
-	result := p.updateProjectPRStatus(command.Plan, ctx, p.ProjectCommandRunner.Plan)
+	cmd := command.Plan
+	if ctx.Quick {
+		cmd = command.QuickPlan
+	}
+	result := p.updateProjectPRStatus(cmd, ctx, p.ProjectCommandRunner.Plan)
 	p.JobMessageSender.Send(ctx, "", OperationComplete)
 	return result
 }
@@ -177,17 +181,13 @@ func (p *ProjectOutputWrapper) updateProjectPRStatus(commandName command.Name, c
 	// Create a PR status to track project's plan status. The status will
 	// include a link to view the progress of atlantis plan command in real
 	// time
-	if !ctx.Quick {
-		if err := p.JobURLSetter.SetJobURLWithStatus(ctx, commandName, models.PendingCommitStatus, nil); err != nil {
-			ctx.Log.Err("updating project PR status", err)
-		}
+
+	if err := p.JobURLSetter.SetJobURLWithStatus(ctx, commandName, models.PendingCommitStatus, nil); err != nil {
+		ctx.Log.Err("updating project PR status", err)
 	}
 
 	// ensures we are differentiating between project level command and overall command
 	result := execute(ctx)
-	if ctx.Quick {
-		return result
-	}
 	if result.Error != nil || result.Failure != "" {
 		if err := p.JobURLSetter.SetJobURLWithStatus(ctx, commandName, models.FailedCommitStatus, &result); err != nil {
 			ctx.Log.Err("updating project PR status", err)

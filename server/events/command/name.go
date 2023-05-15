@@ -30,6 +30,8 @@ const (
 	Import
 	// State is a command to run terraform state rm
 	State
+	// QuickPlan is a light-weight plan that cannot be applied
+	QuickPlan = 9
 	// Adding more? Don't forget to update String() below
 )
 
@@ -74,6 +76,8 @@ func (c Name) String() string {
 		return "import"
 	case State:
 		return "state"
+	case QuickPlan:
+		return "quick_plan"
 	}
 	return ""
 }
