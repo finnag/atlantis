@@ -5,6 +5,7 @@ import (
 	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/models"
 	"github.com/runatlantis/atlantis/server/events/vcs"
+	"runtime/debug"
 )
 
 func NewPlanCommandRunner(
@@ -148,7 +149,7 @@ func (p *PlanCommandRunner) runAutoplan(ctx *command.Context) {
 		ctx.Log.Err("writing results: %s", err)
 	}
 
-	p.updateCommitStatus(ctx, pullStatus)
+	p.updateCommitStatus(ctx, pullStatus, false)
 
 	// Check if there are any planned projects and if there are any errors or if plans are being deleted
 	if len(policyCheckCmds) > 0 &&
@@ -170,6 +171,7 @@ func (p *PlanCommandRunner) run(ctx *command.Context, cmd *CommentCommand) {
 	var err error
 	baseRepo := ctx.Pull.BaseRepo
 	pull := ctx.Pull
+	debug.PrintStack()
 
 	ctx.PullRequestStatus, err = p.pullReqStatusFetcher.FetchPullStatus(pull)
 	if err != nil {
@@ -180,32 +182,34 @@ func (p *PlanCommandRunner) run(ctx *command.Context, cmd *CommentCommand) {
 		ctx.Log.Warn("unable to get pull request status: %s. Continuing with mergeable and approved assumed false", err)
 	}
 
-	if !cmd.Quick {
-		if p.DiscardApprovalOnPlan {
-			if err = p.pullUpdater.VCSClient.DiscardReviews(baseRepo, pull); err != nil {
-				ctx.Log.Err("failed to remove approvals: %s", err)
-			}
+	if !cmd.Quick && p.DiscardApprovalOnPlan {
+		if err = p.pullUpdater.VCSClient.DiscardReviews(baseRepo, pull); err != nil {
+			ctx.Log.Err("failed to remove approvals: %s", err)
 		}
+	}
 
-		if err = p.commitStatusUpdater.UpdateCombined(baseRepo, pull, models.PendingCommitStatus, command.Plan); err != nil {
-			ctx.Log.Warn("unable to update commit status: %s", err)
-		}
+	commandNr := command.Plan
+	if cmd.Quick {
+		commandNr = command.QuickPlan
+	}
+	if err = p.commitStatusUpdater.UpdateCombined(baseRepo, pull, models.PendingCommitStatus, commandNr); err != nil {
+		ctx.Log.Warn("unable to update commit status: %s", err)
 	}
 
 	projectCmds, err := p.prjCmdBuilder.BuildPlanCommands(ctx, cmd)
 	if err != nil {
-		if !cmd.Quick {
-			if statusErr := p.commitStatusUpdater.UpdateCombined(ctx.Pull.BaseRepo, ctx.Pull, models.FailedCommitStatus, command.Plan); statusErr != nil {
-				ctx.Log.Warn("unable to update commit status: %s", statusErr)
-			}
+		if statusErr := p.commitStatusUpdater.UpdateCombined(ctx.Pull.BaseRepo, ctx.Pull, models.FailedCommitStatus, commandNr); statusErr != nil {
+			ctx.Log.Warn("unable to update commit status: %s", statusErr)
 		}
-		p.pullUpdater.updatePull(ctx, cmd, command.Result{Error: err})
+		tmp_cmd := *cmd
+		tmp_cmd.Name = commandNr
+		p.pullUpdater.updatePull(ctx, &tmp_cmd, command.Result{Error: err})
 		return
 	}
 
 	if len(projectCmds) == 0 && p.SilenceNoProjects {
 		ctx.Log.Info("determined there was no project to run plan in")
-		if !cmd.Quick && !p.silenceVCSStatusNoProjects {
+		if !p.silenceVCSStatusNoProjects {
 			if cmd.IsForSpecificProject() {
 				// With a specific plan, just reset the status so it's not stuck in pending state
 				pullStatus, err := p.pullStatusFetcher.GetPullStatus(pull)
@@ -216,20 +220,20 @@ func (p *PlanCommandRunner) run(ctx *command.Context, cmd *CommentCommand) {
 				if pullStatus == nil {
 					// default to 0/0
 					ctx.Log.Debug("setting VCS status to 0/0 success as no previous state was found")
-					if err := p.commitStatusUpdater.UpdateCombinedCount(baseRepo, pull, models.SuccessCommitStatus, command.Plan, 0, 0); err != nil {
+					if err := p.commitStatusUpdater.UpdateCombinedCount(baseRepo, pull, models.SuccessCommitStatus, commandNr, 0, 0); err != nil {
 						ctx.Log.Warn("unable to update commit status: %s", err)
 					}
 					return
 				}
 				ctx.Log.Debug("resetting VCS status")
-				p.updateCommitStatus(ctx, *pullStatus)
+				p.updateCommitStatus(ctx, *pullStatus, cmd.Quick)
 			} else {
 				// With a generic plan, we set successful commit statuses
 				// with 0/0 projects planned successfully because some users require
 				// the Atlantis status to be passing for all pull requests.
 				// Does not apply to skipped runs for specific projects
 				ctx.Log.Debug("setting VCS status to success with no projects found")
-				if err := p.commitStatusUpdater.UpdateCombinedCount(baseRepo, pull, models.SuccessCommitStatus, command.Plan, 0, 0); err != nil {
+				if err := p.commitStatusUpdater.UpdateCombinedCount(baseRepo, pull, models.SuccessCommitStatus, commandNr, 0, 0); err != nil {
 					ctx.Log.Warn("unable to update commit status: %s", err)
 				}
 			}
@@ -265,27 +269,27 @@ func (p *PlanCommandRunner) run(ctx *command.Context, cmd *CommentCommand) {
 		result.PlansDeleted = true
 	}
 
+	tmp_cmd := *cmd
+	tmp_cmd.Name = commandNr
 	p.pullUpdater.updatePull(
 		ctx,
-		cmd,
+		&tmp_cmd,
 		result)
 
-	if !cmd.Quick {
-		pullStatus, err := p.dbUpdater.updateDB(ctx, pull, result.ProjectResults)
-		if err != nil {
-			ctx.Log.Err("writing results: %s", err)
-			return
-		}
+	pullStatus, err := p.dbUpdater.updateDB(ctx, pull, result.ProjectResults)
+	if err != nil {
+		ctx.Log.Err("writing results: %s", err)
+		return
+	}
 
-		p.updateCommitStatus(ctx, pullStatus)
+	p.updateCommitStatus(ctx, pullStatus, cmd.Quick)
 
-		// Runs policy checks step after all plans are successful.
-		// This step does not approve any policies that require approval.
-		if len(result.ProjectResults) > 0 &&
-			!(result.HasErrors() || result.PlansDeleted) {
-			ctx.Log.Info("Running policy check for %s", cmd.String())
-			p.policyCheckCommandRunner.Run(ctx, policyCheckCmds)
-		}
+	// Runs policy checks step after all plans are successful.
+	// This step does not approve any policies that require approval.
+	if !cmd.Quick && len(result.ProjectResults) > 0 &&
+		!(result.HasErrors() || result.PlansDeleted) {
+		ctx.Log.Info("Running policy check for %s", cmd.String())
+		p.policyCheckCommandRunner.Run(ctx, policyCheckCmds)
 	}
 }
 
@@ -297,7 +301,7 @@ func (p *PlanCommandRunner) Run(ctx *command.Context, cmd *CommentCommand) {
 	}
 }
 
-func (p *PlanCommandRunner) updateCommitStatus(ctx *command.Context, pullStatus models.PullStatus) {
+func (p *PlanCommandRunner) updateCommitStatus(ctx *command.Context, pullStatus models.PullStatus, quick bool) {
 	var numSuccess int
 	var numErrored int
 	status := models.SuccessCommitStatus
@@ -312,11 +316,15 @@ func (p *PlanCommandRunner) updateCommitStatus(ctx *command.Context, pullStatus 
 		status = models.FailedCommitStatus
 	}
 
+	commandNr := command.Plan
+	if quick {
+		commandNr = command.QuickPlan
+	}
 	if err := p.commitStatusUpdater.UpdateCombinedCount(
 		ctx.Pull.BaseRepo,
 		ctx.Pull,
 		status,
-		command.Plan,
+		commandNr,
 		numSuccess,
 		len(pullStatus.Projects),
 	); err != nil {
@@ -344,7 +352,7 @@ func (p *PlanCommandRunner) partitionProjectCmds(
 ) {
 	for _, cmd := range cmds {
 		switch cmd.CommandName {
-		case command.Plan:
+		case command.Plan, command.QuickPlan:
 			projectCmds = append(projectCmds, cmd)
 		case command.PolicyCheck:
 			policyCheckCmds = append(policyCheckCmds, cmd)

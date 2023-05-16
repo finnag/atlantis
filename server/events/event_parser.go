@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"runtime/debug"
 	"strings"
 
 	"github.com/go-playground/validator/v10"
@@ -167,6 +168,7 @@ func NewCommentCommand(repoRelDir string, flags []string, name command.Name, sub
 			repoRelDir = "."
 		}
 	}
+	debug.PrintStack()
 	return &CommentCommand{
 		RepoRelDir:          repoRelDir,
 		Flags:               flags,

@@ -76,6 +76,8 @@ func (d *DefaultCommitStatusUpdater) UpdateCombinedCount(repo models.Repo, pull 
 		cmdVerb = "policies checked"
 	case command.Apply:
 		cmdVerb = "applied"
+	case command.QuickPlan:
+		cmdVerb = "quick-planned"
 	}
 
 	return d.Client.UpdateStatus(repo, pull, status, src, fmt.Sprintf("%d/%d projects %s successfully.", numSuccess, numTotal, cmdVerb), "")

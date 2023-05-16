@@ -31,7 +31,7 @@ const (
 	// State is a command to run terraform state rm
 	State
 	// QuickPlan is a light-weight plan that cannot be applied
-	QuickPlan = 9
+	QuickPlan
 	// Adding more? Don't forget to update String() below
 )
 
@@ -49,6 +49,7 @@ var AllCommentCommands = []Name{
 	ApprovePolicies,
 	Import,
 	State,
+	QuickPlan,
 }
 
 // TitleString returns the string representation in title form.

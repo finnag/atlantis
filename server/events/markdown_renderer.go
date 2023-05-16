@@ -29,6 +29,7 @@ import (
 
 var (
 	planCommandTitle            = command.Plan.TitleString()
+	quickplanCommandTitle       = command.QuickPlan.TitleString()
 	applyCommandTitle           = command.Apply.TitleString()
 	policyCheckCommandTitle     = command.PolicyCheck.TitleString()
 	approvePoliciesCommandTitle = command.ApprovePolicies.TitleString()
@@ -285,8 +286,12 @@ func (m *MarkdownRenderer) renderProjectResults(results []command.ProjectResult,
 	switch {
 	case len(resultsTmplData) == 1 && common.Command == planCommandTitle && numPlanSuccesses > 0:
 		tmpl = templates.Lookup("singleProjectPlanSuccess")
+	case len(resultsTmplData) == 1 && common.Command == quickplanCommandTitle && numPlanSuccesses > 0:
+		tmpl = templates.Lookup("singleProjectQuickPlanSuccess")
 	case len(resultsTmplData) == 1 && common.Command == planCommandTitle && numPlanSuccesses == 0:
 		tmpl = templates.Lookup("singleProjectPlanUnsuccessful")
+	case len(resultsTmplData) == 1 && common.Command == quickplanCommandTitle && numPlanSuccesses == 0:
+		tmpl = templates.Lookup("singleProjectQuickPlanUnsuccessful")
 	case len(resultsTmplData) == 1 && common.Command == policyCheckCommandTitle && numPolicyCheckSuccesses > 0:
 		tmpl = templates.Lookup("singleProjectPlanSuccess")
 	case len(resultsTmplData) == 1 && common.Command == policyCheckCommandTitle && numPolicyCheckSuccesses == 0:
@@ -308,6 +313,8 @@ func (m *MarkdownRenderer) renderProjectResults(results []command.ProjectResult,
 		}
 	case common.Command == planCommandTitle:
 		tmpl = templates.Lookup("multiProjectPlan")
+	case common.Command == quickplanCommandTitle:
+		tmpl = templates.Lookup("multiProjectQuickPlan")
 	case common.Command == policyCheckCommandTitle:
 		if numPolicyCheckSuccesses == len(results) {
 			tmpl = templates.Lookup("multiProjectPlan")
