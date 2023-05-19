@@ -3,9 +3,5 @@
 Ran {{ .Command }} for {{ if $result.ProjectName }}project: `{{ $result.ProjectName }}` {{ end }}dir: `{{ $result.RepoRelDir }}` workspace: `{{ $result.Workspace }}`
 
 {{ $result.Rendered }}
-{{ if ne .DisableApplyAll true }}
----
-* :fast_forward: This was a **quick plan**
-{{ end -}}
 {{- template "log" . -}}
 {{ end -}}
