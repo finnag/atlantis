@@ -6,8 +6,7 @@
 {{ if (and $hideUnchangedPlans $result.NoChanges) }}{{continue}}{{end -}}
 ### {{ add $i 1 }}. {{ if $result.ProjectName }}project: `{{ $result.ProjectName }}` {{ end }}dir: `{{ $result.RepoRelDir }}` workspace: `{{ $result.Workspace }}`
 {{ $result.Rendered }}
----
-* :fast_forward: This was a **quick plan**
+
 {{ end -}}
 {{- template "log" . -}}
 {{ end -}}
