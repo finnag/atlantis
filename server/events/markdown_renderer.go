@@ -196,7 +196,7 @@ func (m *MarkdownRenderer) renderProjectResults(results []command.ProjectResult,
 		}
 		if result.PlanSuccess != nil {
 			result.PlanSuccess.TerraformOutput = strings.TrimSpace(result.PlanSuccess.TerraformOutput)
-			if result.Command == command.QuickPlan {
+			if common.Command == quickplanCommandTitle {
 				if m.shouldUseWrappedTmpl(vcsHost, result.PlanSuccess.TerraformOutput) {
 					resultData.Rendered = m.renderTemplateTrimSpace(templates.Lookup("quickplanSuccessWrapped"), planSuccessData{PlanSuccess: *result.PlanSuccess, PlanSummary: result.PlanSuccess.Summary(), PlanWasDeleted: common.PlansDeleted, EnableDiffMarkdownFormat: common.EnableDiffMarkdownFormat})
 				} else {
