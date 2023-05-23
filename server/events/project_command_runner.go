@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 
 	"encoding/json"
@@ -167,7 +166,6 @@ func (p *ProjectOutputWrapper) Plan(ctx command.ProjectContext) command.ProjectR
 	if ctx.Quick {
 		commandNr = command.QuickPlan
 	}
-	debug.PrintStack()
 	result := p.updateProjectPRStatus(commandNr, ctx, p.ProjectCommandRunner.Plan)
 	p.JobMessageSender.Send(ctx, "", OperationComplete)
 	return result
@@ -518,7 +516,6 @@ func (p *DefaultProjectCommandRunner) doPolicyCheck(ctx command.ProjectContext) 
 
 func (p *DefaultProjectCommandRunner) doPlan(ctx command.ProjectContext) (*models.PlanSuccess, string, error) {
 	// Acquire Atlantis lock for this repo/dir/workspace.
-	debug.PrintStack()
 	lockAttempt, err := p.Locker.TryLock(ctx.Log, ctx.Pull, ctx.User, ctx.Workspace, models.NewProject(ctx.Pull.BaseRepo.FullName, ctx.RepoRelDir), ctx.RepoLocking)
 	if err != nil {
 		return nil, "", errors.Wrap(err, "acquiring lock")

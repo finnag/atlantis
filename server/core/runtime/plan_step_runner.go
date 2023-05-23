@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime/debug"
 	"strings"
 
 	version "github.com/hashicorp/go-version"
@@ -49,7 +48,6 @@ func (p *planStepRunner) Run(ctx command.ProjectContext, extraArgs []string, pat
 		tfVersion = ctx.TerraformVersion
 	}
 
-	debug.PrintStack()
 	planFile := filepath.Join(path, GetPlanFilename(ctx.Workspace, ctx.ProjectName))
 	planCmd := p.buildPlanCmd(ctx, extraArgs, path, tfVersion, planFile)
 	output, err := p.TerraformExecutor.RunCommandWithVersion(ctx, filepath.Clean(path), planCmd, envs, tfVersion, ctx.Workspace)

@@ -5,7 +5,6 @@ import (
 	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/models"
 	"github.com/runatlantis/atlantis/server/events/vcs"
-	"runtime/debug"
 )
 
 func NewPlanCommandRunner(
@@ -171,7 +170,6 @@ func (p *PlanCommandRunner) run(ctx *command.Context, cmd *CommentCommand) {
 	var err error
 	baseRepo := ctx.Pull.BaseRepo
 	pull := ctx.Pull
-	debug.PrintStack()
 
 	ctx.PullRequestStatus, err = p.pullReqStatusFetcher.FetchPullStatus(pull)
 	if err != nil {

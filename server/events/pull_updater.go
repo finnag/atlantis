@@ -3,7 +3,6 @@ package events
 import (
 	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/vcs"
-	"runtime/debug"
 )
 
 type PullUpdater struct {
@@ -19,7 +18,6 @@ func (c *PullUpdater) updatePull(ctx *command.Context, cmd PullCommand, res comm
 	} else if res.Failure != "" {
 		ctx.Log.Warn(res.Failure)
 	}
-	debug.PrintStack()
 	// HidePrevCommandComments will hide old comments left from previous runs to reduce
 	// clutter in a pull/merge request. This will not delete the comment, since the
 	// comment trail may be useful in auditing or backtracing problems.
