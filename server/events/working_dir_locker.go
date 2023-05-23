@@ -15,6 +15,7 @@ package events
 
 import (
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"sync"
 )
@@ -59,7 +60,7 @@ func NewDefaultWorkingDirLocker() *DefaultWorkingDirLocker {
 func (d *DefaultWorkingDirLocker) TryLockPull(repoFullName string, pullNum int) (func(), error) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-
+	debug.PrintStack()
 	pullKey := d.pullKey(repoFullName, pullNum)
 	for _, l := range d.locks {
 		if l == pullKey || strings.HasPrefix(l, pullKey+"/") {
@@ -77,7 +78,7 @@ func (d *DefaultWorkingDirLocker) TryLockPull(repoFullName string, pullNum int) 
 func (d *DefaultWorkingDirLocker) TryLock(repoFullName string, pullNum int, workspace string, path string) (func(), error) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-
+	debug.PrintStack()
 	pullKey := d.pullKey(repoFullName, pullNum)
 	workspaceKey := d.workspaceKey(repoFullName, pullNum, workspace, path)
 	for _, l := range d.locks {
@@ -97,6 +98,7 @@ func (d *DefaultWorkingDirLocker) TryLock(repoFullName string, pullNum int, work
 func (d *DefaultWorkingDirLocker) unlock(workspaceKey string) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
+	debug.PrintStack()
 	d.removeLock(workspaceKey)
 }
 
@@ -104,7 +106,7 @@ func (d *DefaultWorkingDirLocker) unlock(workspaceKey string) {
 func (d *DefaultWorkingDirLocker) UnlockPull(repoFullName string, pullNum int) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-
+	debug.PrintStack()
 	pullKey := d.pullKey(repoFullName, pullNum)
 	d.removeLock(pullKey)
 }
