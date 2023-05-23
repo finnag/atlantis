@@ -89,16 +89,14 @@ func (d *DefaultWorkingDirLocker) TryLock(repoFullName string, pullNum int, work
 	}
 	d.locks = append(d.locks, workspaceKey)
 	return func() {
-		d.unlock(repoFullName, pullNum, workspace, path)
+		d.unlock(workspaceKey)
 	}, nil
 }
 
 // Unlock unlocks the workspace for this pull.
-func (d *DefaultWorkingDirLocker) unlock(repoFullName string, pullNum int, workspace string, path string) {
+func (d *DefaultWorkingDirLocker) unlock(workspaceKey string) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-
-	workspaceKey := d.workspaceKey(repoFullName, pullNum, workspace, path)
 	d.removeLock(workspaceKey)
 }
 
