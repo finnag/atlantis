@@ -530,15 +530,10 @@ func (p *DefaultProjectCommandRunner) doPlan(ctx command.ProjectContext) (*model
 	if err != nil {
 		return nil, "", err
 	}
+	defer unlockFn()
 
 	// Clone is idempotent so okay to run even if the repo was already cloned.
 	repoDir, hasDiverged, cloneErr := p.WorkingDir.Clone(ctx.Log, ctx.HeadRepo, ctx.Pull, ctx.Workspace)
-	if ctx.Quick {
-		// For a quick plan we only protect the clone operation with the internal lock
-		unlockFn()
-	} else {
-		defer unlockFn()
-	}
 	if cloneErr != nil {
 		if unlockErr := lockAttempt.UnlockFn(); unlockErr != nil {
 			ctx.Log.Err("error unlocking state after plan error: %v", unlockErr)
