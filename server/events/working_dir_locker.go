@@ -15,6 +15,7 @@ package events
 
 import (
 	"fmt"
+	"os"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -64,11 +65,13 @@ func (d *DefaultWorkingDirLocker) TryLockPull(repoFullName string, pullNum int) 
 	pullKey := d.pullKey(repoFullName, pullNum)
 	for _, l := range d.locks {
 		if l == pullKey || strings.HasPrefix(l, pullKey+"/") {
+			fmt.Fprintf(os.Stderr, "[LOCK-DEBUG] TryLockPull trying %s but already found %s\n", pullKey, l)
 			return func() {}, fmt.Errorf("The Atlantis working dir is currently locked by another" +
 				" command that is running for this pull request.\n" +
 				"Wait until the previous command is complete and try again.")
 		}
 	}
+	fmt.Fprintf(os.Stderr, "[LOCK-DEBUG] TryLockPull Adding lock %s\n", pullKey)
 	d.locks = append(d.locks, pullKey)
 	return func() {
 		d.UnlockPull(repoFullName, pullNum)
@@ -83,11 +86,13 @@ func (d *DefaultWorkingDirLocker) TryLock(repoFullName string, pullNum int, work
 	workspaceKey := d.workspaceKey(repoFullName, pullNum, workspace, path)
 	for _, l := range d.locks {
 		if l == pullKey || l == workspaceKey {
+			fmt.Fprintf(os.Stderr, "[LOCK-DEBUG] TryLock trying %s/%s but already found %s\n", pullKey, workspaceKey, l)
 			return func() {}, fmt.Errorf("The %s workspace at path %s is currently locked by another"+
 				" command that is running for this pull request.\n"+
 				"Wait until the previous command is complete and try again.", workspace, path)
 		}
 	}
+	fmt.Fprintf(os.Stderr, "[LOCK-DEBUG] TryLock Adding lock %s\n", workspaceKey)
 	d.locks = append(d.locks, workspaceKey)
 	return func() {
 		d.unlock(workspaceKey)
@@ -99,6 +104,7 @@ func (d *DefaultWorkingDirLocker) unlock(workspaceKey string) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 	debug.PrintStack()
+	fmt.Fprintf(os.Stderr, "[LOCK-DEBUG] unlock will remove lock %s\n", workspaceKey)
 	d.removeLock(workspaceKey)
 }
 
@@ -108,15 +114,24 @@ func (d *DefaultWorkingDirLocker) UnlockPull(repoFullName string, pullNum int) {
 	defer d.mutex.Unlock()
 	debug.PrintStack()
 	pullKey := d.pullKey(repoFullName, pullNum)
+	fmt.Fprintf(os.Stderr, "[LOCK-DEBUG] UnlockPull will remove lock %s\n", pullKey)
 	d.removeLock(pullKey)
 }
 
 func (d *DefaultWorkingDirLocker) removeLock(key string) {
+	removed := 0
 	var newLocks []string
 	for _, l := range d.locks {
 		if l != key {
 			newLocks = append(newLocks, l)
+		} else {
+			removed++
 		}
+	}
+	if removed == 0 {
+		fmt.Fprintf(os.Stderr, "[LOCK-DEBUG] removeLock did NOT REMOVE ANY LOCKS for %s\n", key)
+	} else {
+		fmt.Fprintf(os.Stderr, "[LOCK-DEBUG] removeLock removed %d lock(s) for %s\n", removed, key)
 	}
 	d.locks = newLocks
 }
