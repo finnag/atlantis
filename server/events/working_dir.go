@@ -40,7 +40,7 @@ type WorkingDir interface {
 	// absolute path to the root of the cloned repo. It also returns
 	// a boolean indicating if we should warn users that the branch we're
 	// merging into has been updated since we cloned it.
-	Clone(log logging.SimpleLogging, headRepo models.Repo, p models.PullRequest, workspace string) (string, bool, error)
+	Clone(log logging.SimpleLogging, headRepo models.Repo, p models.PullRequest, safeToMerge bool, workspace string) (string, bool, error)
 	// GetWorkingDir returns the path to the workspace for this repo and pull.
 	// If workspace does not exist on disk, error will be of type os.IsNotExist.
 	GetWorkingDir(r models.Repo, p models.PullRequest, workspace string) (string, error)
@@ -87,6 +87,7 @@ func (w *FileWorkspace) Clone(
 	log logging.SimpleLogging,
 	headRepo models.Repo,
 	p models.PullRequest,
+	safeToMerge bool,
 	workspace string) (string, bool, error) {
 	cloneDir := w.cloneDir(p.BaseRepo, p, workspace)
 	hasDiverged := false
@@ -117,7 +118,7 @@ func (w *FileWorkspace) Clone(
 		// We're prefix matching here because BitBucket doesn't give us the full
 		// commit, only a 12 character prefix.
 		if strings.HasPrefix(currCommit, p.HeadCommit) {
-			if w.CheckoutMerge && w.recheckDiverged(log, p, headRepo, cloneDir) {
+			if w.CheckoutMerge && safeToMerge && w.recheckDiverged(log, p, headRepo, cloneDir) {
 				log.Info("base branch has been updated, using merge strategy and will clone again")
 				hasDiverged = true
 			} else {
