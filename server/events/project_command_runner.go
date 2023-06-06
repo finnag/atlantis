@@ -162,7 +162,7 @@ type ProjectOutputWrapper struct {
 }
 
 func (p *ProjectOutputWrapper) Plan(ctx command.ProjectContext) command.ProjectResult {
-	result := p.updateProjectPRStatus(command.Plan, ctx, p.ProjectCommandRunner.Plan)
+	result := p.updateProjectPRStatus(ctx.CommandName, ctx, p.ProjectCommandRunner.Plan)
 	p.JobMessageSender.Send(ctx, "", OperationComplete)
 	return result
 }
@@ -512,7 +512,8 @@ func (p *DefaultProjectCommandRunner) doPolicyCheck(ctx command.ProjectContext) 
 
 func (p *DefaultProjectCommandRunner) doPlan(ctx command.ProjectContext) (*models.PlanSuccess, string, error) {
 	// Acquire Atlantis lock for this repo/dir/workspace.
-	lockAttempt, err := p.Locker.TryLock(ctx.Log, ctx.Pull, ctx.User, ctx.Workspace, models.NewProject(ctx.Pull.BaseRepo.FullName, ctx.RepoRelDir), ctx.RepoLocking)
+	useRealLock := ctx.RepoLocking && ctx.CommandName != command.DraftPlan
+	lockAttempt, err := p.Locker.TryLock(ctx.Log, ctx.Pull, ctx.User, ctx.Workspace, models.NewProject(ctx.Pull.BaseRepo.FullName, ctx.RepoRelDir), useRealLock)
 	if err != nil {
 		return nil, "", errors.Wrap(err, "acquiring lock")
 	}
@@ -732,7 +733,7 @@ func (p *DefaultProjectCommandRunner) runSteps(steps []valid.Step, ctx command.P
 		switch step.StepName {
 		case "init":
 			out, err = p.InitStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
-		case "plan":
+		case "plan", "draftplan":
 			out, err = p.PlanStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
 		case "show":
 			_, err = p.ShowStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
