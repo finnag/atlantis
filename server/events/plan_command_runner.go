@@ -338,7 +338,7 @@ func (p *PlanCommandRunner) partitionProjectCmds(
 ) {
 	for _, cmd := range cmds {
 		switch cmd.CommandName {
-		case command.Plan:
+		case command.Plan, command.QuickPlan:
 			projectCmds = append(projectCmds, cmd)
 		case command.PolicyCheck:
 			policyCheckCmds = append(policyCheckCmds, cmd)

@@ -1,0 +1,7 @@
+{{ define "quickplanSuccessUnwrapped" -}}
+```diff
+{{ if .EnableDiffMarkdownFormat }}{{ .DiffMarkdownFormattedTerraformOutput }}{{ else }}{{ .TerraformOutput }}{{ end }}
+```
+
+{{ template "diverged" . }}
+{{ end -}}
