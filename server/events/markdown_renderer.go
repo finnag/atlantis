@@ -101,6 +101,7 @@ type planSuccessData struct {
 	DisableApply             bool
 	DisableRepoLocking       bool
 	EnableDiffMarkdownFormat bool
+	PlanStats                models.PlanSuccessStats
 }
 
 type policyCheckResultsData struct {
@@ -196,17 +197,27 @@ func (m *MarkdownRenderer) renderProjectResults(results []command.ProjectResult,
 		}
 		if result.PlanSuccess != nil {
 			result.PlanSuccess.TerraformOutput = strings.TrimSpace(result.PlanSuccess.TerraformOutput)
+			data := planSuccessData{
+				PlanSuccess:              *result.PlanSuccess,
+				PlanWasDeleted:           common.PlansDeleted,
+				DisableApply:             common.DisableApply,
+				DisableRepoLocking:       common.DisableRepoLocking,
+				EnableDiffMarkdownFormat: common.EnableDiffMarkdownFormat,
+				PlanStats:                result.PlanSuccess.Stats(),
+			}
 			if common.Command == quickplanCommandTitle {
 				if m.shouldUseWrappedTmpl(vcsHost, result.PlanSuccess.TerraformOutput) {
-					resultData.Rendered = m.renderTemplateTrimSpace(templates.Lookup("quickplanSuccessWrapped"), planSuccessData{PlanSuccess: *result.PlanSuccess, PlanSummary: result.PlanSuccess.Summary(), PlanWasDeleted: common.PlansDeleted, EnableDiffMarkdownFormat: common.EnableDiffMarkdownFormat})
+					data.PlanSummary = result.PlanSuccess.Summary()
+					resultData.Rendered = m.renderTemplateTrimSpace(templates.Lookup("quickplanSuccessWrapped"), data)
 				} else {
-					resultData.Rendered = m.renderTemplateTrimSpace(templates.Lookup("quickplanSuccessUnwrapped"), planSuccessData{PlanSuccess: *result.PlanSuccess, PlanWasDeleted: common.PlansDeleted, EnableDiffMarkdownFormat: common.EnableDiffMarkdownFormat})
+					resultData.Rendered = m.renderTemplateTrimSpace(templates.Lookup("quickplanSuccessUnwrapped"), data)
 				}
 			} else {
 				if m.shouldUseWrappedTmpl(vcsHost, result.PlanSuccess.TerraformOutput) {
-					resultData.Rendered = m.renderTemplateTrimSpace(templates.Lookup("planSuccessWrapped"), planSuccessData{PlanSuccess: *result.PlanSuccess, PlanSummary: result.PlanSuccess.Summary(), PlanWasDeleted: common.PlansDeleted, DisableApply: common.DisableApply, DisableRepoLocking: common.DisableRepoLocking, EnableDiffMarkdownFormat: common.EnableDiffMarkdownFormat})
+					data.PlanSummary = result.PlanSuccess.Summary()
+					resultData.Rendered = m.renderTemplateTrimSpace(templates.Lookup("planSuccessWrapped"), data)
 				} else {
-					resultData.Rendered = m.renderTemplateTrimSpace(templates.Lookup("planSuccessUnwrapped"), planSuccessData{PlanSuccess: *result.PlanSuccess, PlanWasDeleted: common.PlansDeleted, DisableApply: common.DisableApply, DisableRepoLocking: common.DisableRepoLocking, EnableDiffMarkdownFormat: common.EnableDiffMarkdownFormat})
+					resultData.Rendered = m.renderTemplateTrimSpace(templates.Lookup("planSuccessUnwrapped"), data)
 				}
 			}
 			resultData.NoChanges = result.PlanSuccess.NoChanges()
