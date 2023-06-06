@@ -88,6 +88,7 @@ func (b *BoltDB) TryLock(newLock models.ProjectLock) (bool, models.ProjectLock, 
 	var lockAcquired bool
 	var currLock models.ProjectLock
 	key := b.lockKey(newLock.Project, newLock.Workspace)
+	fmt.Fprintf(os.Stderr, "boltdb trylock %s\n", key)
 	newLockSerialized, _ := json.Marshal(newLock)
 	transactionErr := b.db.Update(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(b.locksBucketName)
@@ -125,6 +126,7 @@ func (b *BoltDB) Unlock(p models.Project, workspace string) (*models.ProjectLock
 	var lock models.ProjectLock
 	foundLock := false
 	key := b.lockKey(p, workspace)
+	fmt.Fprintf(os.Stderr, "boltdb Unlock %s\n", key)
 	err := b.db.Update(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(b.locksBucketName)
 		serialized := bucket.Get([]byte(key))
@@ -181,7 +183,7 @@ func (b *BoltDB) LockCommand(cmdName command.Name, lockTime time.Time) (*command
 			UnixTime: lockTime.Unix(),
 		},
 	}
-
+	fmt.Fprintf(os.Stderr, "boltdb LockCommand for %s\n", cmdName.String())
 	newLockSerialized, _ := json.Marshal(lock)
 	transactionErr := b.db.Update(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(b.globalLocksBucketName)
@@ -206,6 +208,7 @@ func (b *BoltDB) LockCommand(cmdName command.Name, lockTime time.Time) (*command
 // UnlockCommand removes CommandName lock if present.
 // If there are no lock it returns an error.
 func (b *BoltDB) UnlockCommand(cmdName command.Name) error {
+	fmt.Fprintf(os.Stderr, "boltdb UnlockCommand %s\n", cmdName.String())
 	transactionErr := b.db.Update(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(b.globalLocksBucketName)
 
@@ -255,6 +258,7 @@ func (b *BoltDB) CheckCommandLock(cmdName command.Name) (*command.Lock, error) {
 // UnlockByPull deletes all locks associated with that pull request and returns them.
 func (b *BoltDB) UnlockByPull(repoFullName string, pullNum int) ([]models.ProjectLock, error) {
 	var locks []models.ProjectLock
+	fmt.Fprintf(os.Stderr, "boltdb UnlockByPull %s %d\n", repoFullName, pullNum)
 	err := b.db.View(func(tx *bolt.Tx) error {
 		c := tx.Bucket(b.locksBucketName).Cursor()
 
@@ -413,6 +417,7 @@ func (b *BoltDB) DeletePullStatus(pull models.PullRequest) error {
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(os.Stderr, "boltdb DeletePullStatus %s\n", key)
 	err = b.db.Update(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(b.pullsBucketName)
 		return bucket.Delete(key)
