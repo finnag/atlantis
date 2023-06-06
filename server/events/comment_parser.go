@@ -43,6 +43,8 @@ const (
 	autoMergeDisabledFlagShort   = ""
 	verboseFlagLong              = "verbose"
 	verboseFlagShort             = ""
+	quickFlagLong                = "quick"
+	quickFlagShort               = "q"
 	clearPolicyApprovalFlagLong  = "clear-policy-approval"
 	clearPolicyApprovalFlagShort = ""
 )
@@ -225,6 +227,7 @@ func (e *CommentParser) Parse(rawComment string, vcsHost models.VCSHostType) Com
 	var verbose, autoMergeDisabled bool
 	var flagSet *pflag.FlagSet
 	var name command.Name
+	var quick bool
 
 	// Set up the flag parsing depending on the command.
 	switch cmd {
@@ -236,6 +239,7 @@ func (e *CommentParser) Parse(rawComment string, vcsHost models.VCSHostType) Com
 		flagSet.StringVarP(&dir, dirFlagLong, dirFlagShort, "", "Which directory to run plan in relative to root of repo, ex. 'child/dir'.")
 		flagSet.StringVarP(&project, projectFlagLong, projectFlagShort, "", "Which project to run plan for. Refers to the name of the project configured in a repo config file. Cannot be used at same time as workspace or dir flags.")
 		flagSet.BoolVarP(&verbose, verboseFlagLong, verboseFlagShort, false, "Append Atlantis log to comment.")
+		flagSet.BoolVarP(&quick, quickFlagLong, quickFlagShort, false, "Run a quick plan with no locking. Cannot be applied.")
 	case command.Apply.String():
 		name = command.Apply
 		flagSet = pflag.NewFlagSet(command.Apply.String(), pflag.ContinueOnError)
@@ -314,7 +318,7 @@ func (e *CommentParser) Parse(rawComment string, vcsHost models.VCSHostType) Com
 	}
 
 	return CommentParseResult{
-		Command: NewCommentCommand(dir, extraArgs, name, subName, verbose, autoMergeDisabled, workspace, project, policySet, clearPolicyApproval),
+		Command: NewCommentCommand(dir, extraArgs, name, subName, verbose, autoMergeDisabled, workspace, project, quick, policySet, clearPolicyApproval),
 	}
 }
 

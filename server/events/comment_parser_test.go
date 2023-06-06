@@ -230,6 +230,21 @@ func TestParse_UnusedArguments(t *testing.T) {
 	}
 }
 
+func TestParse_QuickPlan(t *testing.T) {
+	var quickComments = []struct {
+		comment string
+		quick   bool
+	}{
+		{"atlantis plan -q", true},
+		{"atlantis plan --quick", true},
+		{"atlantis plan", false},
+	}
+	for _, c := range quickComments {
+		r := commentParser.Parse(c.comment, models.Github)
+		Assert(t, r.Command.Quick == c.quick, "Expected Command.Quick to be %v for comment %q", c.quick, c.comment)
+	}
+}
+
 func TestParse_UnknownShorthandFlag(t *testing.T) {
 	comment := "atlantis unlock -d ."
 	r := commentParser.Parse(comment, models.Github)
@@ -1012,6 +1027,7 @@ var PlanUsage = `Usage of plan:
   -p, --project string     Which project to run plan for. Refers to the name of the
                            project configured in a repo config file. Cannot be used
                            at same time as workspace or dir flags.
+  -q, --quick              Run a quick plan with no locking. Cannot be applied.
       --verbose            Append Atlantis log to comment.
   -w, --workspace string   Switch to this Terraform workspace before planning.
 `
