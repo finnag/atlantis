@@ -49,6 +49,10 @@ type WorkingDir interface {
 	// Delete deletes the workspace for this repo and pull.
 	Delete(r models.Repo, p models.PullRequest) error
 	DeleteForWorkspace(r models.Repo, p models.PullRequest, workspace string) error
+	// Set a flag in the workingdir so Clone() can know that it is safe to re-clone the workingdir if
+	// the upstream branch has been modified. This is only safe after grabbing the project lock
+	// and before running any plans
+	SetCheckForUpstreamChanges()
 }
 
 // FileWorkspace implements WorkingDir with the file system.
@@ -75,6 +79,8 @@ type FileWorkspace struct {
 	GithubAppEnabled bool
 	// use the global setting without overriding
 	GpgNoSigningEnabled bool
+	// flag indicating if we have to merge with potential new changes upstream (directly after grabbing project lock)
+	CheckForUpstreamChanges bool
 }
 
 // Clone git clones headRepo, checks out the branch and then returns the absolute
@@ -89,7 +95,7 @@ func (w *FileWorkspace) Clone(
 	p models.PullRequest,
 	workspace string) (string, bool, error) {
 	cloneDir := w.cloneDir(p.BaseRepo, p, workspace)
-	hasDiverged := false
+	defer func() { w.CheckForUpstreamChanges = false }()
 
 	// If the directory already exists, check if it's at the right commit.
 	// If so, then we do nothing.
@@ -117,9 +123,9 @@ func (w *FileWorkspace) Clone(
 		// We're prefix matching here because BitBucket doesn't give us the full
 		// commit, only a 12 character prefix.
 		if strings.HasPrefix(currCommit, p.HeadCommit) {
-			if w.CheckoutMerge && w.recheckDiverged(log, p, headRepo, cloneDir) {
-				log.Info("base branch has been updated, using merge strategy and will clone again")
-				hasDiverged = true
+			if w.CheckForUpstreamChanges && w.CheckoutMerge && w.recheckDiverged(log, p, headRepo, cloneDir) {
+				log.Info("base branch has been updated, using merge strategy and will merge again")
+				return cloneDir, true, w.mergeAgain(log, cloneDir, headRepo, p)
 			} else {
 				log.Debug("repo is at correct commit %q so will not re-clone", p.HeadCommit)
 				return cloneDir, false, nil
@@ -131,7 +137,7 @@ func (w *FileWorkspace) Clone(
 	}
 
 	// Otherwise we clone the repo.
-	return cloneDir, hasDiverged, w.forceClone(log, cloneDir, headRepo, p)
+	return cloneDir, false, w.forceClone(log, cloneDir, headRepo, p)
 }
 
 // recheckDiverged returns true if the branch we're merging into has diverged
@@ -235,7 +241,66 @@ func (w *FileWorkspace) forceClone(log logging.SimpleLogging,
 		baseCloneURL = w.TestingOverrideBaseCloneURL
 	}
 
-	runGit := func(args ...string) error {
+	runGit := w.makeGitRunner(log, cloneDir, headRepo, p)
+
+	// if branch strategy, use depth=1
+	if !w.CheckoutMerge {
+		return runGit("clone", "--depth=1", "--branch", p.HeadBranch, "--single-branch", headCloneURL, cloneDir)
+	}
+
+	// if merge strategy...
+
+	// if no checkout depth, omit depth arg
+	if w.CheckoutDepth == 0 {
+		if err := runGit("clone", "--branch", p.BaseBranch, "--single-branch", baseCloneURL, cloneDir); err != nil {
+			return err
+		}
+	} else {
+		if err := runGit("clone", "--depth", fmt.Sprint(w.CheckoutDepth), "--branch", p.BaseBranch, "--single-branch", baseCloneURL, cloneDir); err != nil {
+			return err
+		}
+	}
+
+	if err := runGit("remote", "add", "head", headCloneURL); err != nil {
+		return err
+	}
+	if w.GpgNoSigningEnabled {
+		if err := runGit("config", "--local", "commit.gpgsign", "false"); err != nil {
+			return err
+		}
+	}
+
+	return w.mergeToBaseBranch(p, runGit)
+}
+
+// There is a new upstream update that we need, and we want to update to it
+// without deleting any existing plans
+func (w *FileWorkspace) mergeAgain(log logging.SimpleLogging,
+	cloneDir string,
+	headRepo models.Repo,
+	p models.PullRequest) error {
+
+	value, _ := cloneLocks.LoadOrStore(cloneDir, new(sync.Mutex))
+	mutex := value.(*sync.Mutex)
+
+	defer mutex.Unlock()
+	if locked := mutex.TryLock(); !locked {
+		mutex.Lock()
+		return nil
+	}
+
+	runGit := w.makeGitRunner(log, cloneDir, headRepo, p)
+
+	// Reset branch as if it was cloned again
+	if err := runGit("reset", "--hard", fmt.Sprintf("refs/remotes/head/%s", p.BaseBranch)); err != nil {
+		return err
+	}
+
+	return w.mergeToBaseBranch(p, runGit)
+}
+
+func (w *FileWorkspace) makeGitRunner(log logging.SimpleLogging, cloneDir string, headRepo models.Repo, p models.PullRequest) func(args ...string) error {
+	return func(args ...string) error {
 		cmd := exec.Command("git", args...) // nolint: gosec
 		cmd.Dir = cloneDir
 		// The git merge command requires these env vars are set.
@@ -255,29 +320,10 @@ func (w *FileWorkspace) forceClone(log logging.SimpleLogging,
 		log.Debug("ran: %s. Output: %s", cmdStr, strings.TrimSuffix(sanitizedOutput, "\n"))
 		return nil
 	}
+}
 
-	// if branch strategy, use depth=1
-	if !w.CheckoutMerge {
-		return runGit("clone", "--depth=1", "--branch", p.HeadBranch, "--single-branch", headCloneURL, cloneDir)
-	}
-	
-	// if merge strategy...
-
-	// if no checkout depth, omit depth arg
-	if w.CheckoutDepth == 0 {
-		if err := runGit("clone", "--branch", p.BaseBranch, "--single-branch", baseCloneURL, cloneDir); err != nil {
-			 return err
-		}
-	} else {
-	 	if err := runGit("clone", "--depth", fmt.Sprint(w.CheckoutDepth), "--branch", p.BaseBranch, "--single-branch", baseCloneURL, cloneDir); err != nil {
-			 return err
-		}
-	}
-
-	if err := runGit("remote", "add", "head", headCloneURL); err != nil {
-		return err
-	}
-
+// Merge the PR into the base branch.
+func (w *FileWorkspace) mergeToBaseBranch(p models.PullRequest, runGit func(args ...string) error) error {
 	fetchRef := fmt.Sprintf("+refs/heads/%s:", p.HeadBranch)
 	fetchRemote := "head"
 	if w.GithubAppEnabled {
@@ -285,22 +331,17 @@ func (w *FileWorkspace) forceClone(log logging.SimpleLogging,
 		fetchRemote = "origin"
 	}
 
-        // if no checkout depth, omit depth arg
-        if w.CheckoutDepth == 0 {
-                if err := runGit("fetch", fetchRemote, fetchRef); err != nil {
-                         return err
-                }
-        } else {
-                if err := runGit("fetch", "--depth", fmt.Sprint(w.CheckoutDepth), fetchRemote, fetchRef); err != nil {
-                         return err
-                }
-        }
-
-	if w.GpgNoSigningEnabled {
-		if err := runGit("config", "--local", "commit.gpgsign", "false"); err != nil {
+	// if no checkout depth, omit depth arg
+	if w.CheckoutDepth == 0 {
+		if err := runGit("fetch", fetchRemote, fetchRef); err != nil {
+			return err
+		}
+	} else {
+		if err := runGit("fetch", "--depth", fmt.Sprint(w.CheckoutDepth), fetchRemote, fetchRef); err != nil {
 			return err
 		}
 	}
+
 	if err := runGit("merge-base", p.BaseBranch, "FETCH_HEAD"); err != nil {
 		// git merge-base returning error means that we did not receive enough commits in shallow clone.
 		// Fall back to retrieving full repo history.
@@ -360,4 +401,9 @@ func (w *FileWorkspace) cloneDir(r models.Repo, p models.PullRequest, workspace 
 func (w *FileWorkspace) sanitizeGitCredentials(s string, base models.Repo, head models.Repo) string {
 	baseReplaced := strings.Replace(s, base.CloneURL, base.SanitizedCloneURL, -1)
 	return strings.Replace(baseReplaced, head.CloneURL, head.SanitizedCloneURL, -1)
+}
+
+// Set the flag that indicates we need to check for upstream changes (if using merge checkout strategy)
+func (w *FileWorkspace) SetCheckForUpstreamChanges() {
+	w.CheckForUpstreamChanges = true
 }
