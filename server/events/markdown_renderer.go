@@ -106,6 +106,8 @@ type planSuccessData struct {
 
 type policyCheckResultsData struct {
 	models.PolicyCheckResults
+	PreConftestOutput     string
+	PostConftestOutput    string
 	PolicyCheckSummary    string
 	PolicyApprovalSummary string
 	PolicyCleared         bool
@@ -224,6 +226,8 @@ func (m *MarkdownRenderer) renderProjectResults(results []command.ProjectResult,
 			numPlanSuccesses++
 		} else if result.PolicyCheckResults != nil && common.Command == policyCheckCommandTitle {
 			policyCheckResults := policyCheckResultsData{
+				PreConftestOutput:     result.PolicyCheckResults.PreConftestOutput,
+				PostConftestOutput:    result.PolicyCheckResults.PostConftestOutput,
 				PolicyCheckResults:    *result.PolicyCheckResults,
 				PolicyCheckSummary:    result.PolicyCheckResults.Summary(),
 				PolicyApprovalSummary: result.PolicyCheckResults.PolicySummary(),
