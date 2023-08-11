@@ -1,9 +1,9 @@
 module github.com/runatlantis/atlantis/e2e
 
-go 1.20
+go 1.21
 
 require (
-	github.com/google/go-github/v53 v53.1.0
+	github.com/google/go-github/v53 v53.2.0
 	github.com/hashicorp/go-multierror v1.1.1
 )
 
