@@ -25,27 +25,23 @@ func NewMockWorkingDir(options ...pegomock.Option) *MockWorkingDir {
 func (mock *MockWorkingDir) SetFailHandler(fh pegomock.FailHandler) { mock.fail = fh }
 func (mock *MockWorkingDir) FailHandler() pegomock.FailHandler      { return mock.fail }
 
-func (mock *MockWorkingDir) Clone(headRepo models.Repo, p models.PullRequest, workspace string) (string, bool, error) {
+func (mock *MockWorkingDir) Clone(headRepo models.Repo, p models.PullRequest, workspace string) (ClonedDir, error) {
 	if mock == nil {
 		panic("mock must not be nil. Use myMock := NewMockWorkingDir().")
 	}
 	params := []pegomock.Param{headRepo, p, workspace}
-	result := pegomock.GetGenericMockFrom(mock).Invoke("Clone", params, []reflect.Type{reflect.TypeOf((*string)(nil)).Elem(), reflect.TypeOf((*bool)(nil)).Elem(), reflect.TypeOf((*error)(nil)).Elem()})
-	var ret0 string
-	var ret1 bool
-	var ret2 error
+	result := pegomock.GetGenericMockFrom(mock).Invoke("Clone", params, []reflect.Type{reflect.TypeOf((*ClonedDir)(nil)).Elem(), reflect.TypeOf((*error)(nil)).Elem()})
+	var ret0 ClonedDir
+	var ret1 error
 	if len(result) != 0 {
 		if result[0] != nil {
-			ret0 = result[0].(string)
+			ret0 = result[0].(ClonedDir)
 		}
 		if result[1] != nil {
-			ret1 = result[1].(bool)
-		}
-		if result[2] != nil {
-			ret2 = result[2].(error)
+			ret1 = result[1].(error)
 		}
 	}
-	return ret0, ret1, ret2
+	return ret0, ret1
 }
 
 func (mock *MockWorkingDir) Delete(r models.Repo, p models.PullRequest) error {

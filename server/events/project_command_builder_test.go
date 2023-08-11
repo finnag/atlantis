@@ -132,9 +132,9 @@ projects:
 			tmpDir := DirStructure(t, map[string]interface{}{
 				"main.tf": nil,
 			})
-
+			clonedDir := MockClonedDirectory{tmpDir}
 			workingDir := mocks.NewMockWorkingDir()
-			When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
+			When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(&clonedDir, nil)
 			vcsClient := vcsmocks.NewMockClient()
 			When(vcsClient.GetModifiedFiles(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn([]string{"main.tf"}, nil)
 			if c.AtlantisYAML != "" {
@@ -482,9 +482,10 @@ projects:
 				tmpDir := DirStructure(t, map[string]interface{}{
 					"main.tf": nil,
 				})
+				clonedDir := MockClonedDirectory{tmpDir}
 
 				workingDir := mocks.NewMockWorkingDir()
-				When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
+				When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(&clonedDir, nil)
 				When(workingDir.GetWorkingDir(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, nil)
 				vcsClient := vcsmocks.NewMockClient()
 				When(vcsClient.GetModifiedFiles(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn([]string{"main.tf"}, nil)
@@ -668,9 +669,10 @@ projects:
 		t.Run(c.Description+"_"+command.Plan.String(), func(t *testing.T) {
 			RegisterMockTestingT(t)
 			tmpDir := DirStructure(t, c.DirectoryStructure)
+			clonedDir := MockClonedDirectory{tmpDir}
 
 			workingDir := mocks.NewMockWorkingDir()
-			When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
+			When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(&clonedDir, nil)
 			When(workingDir.GetWorkingDir(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, nil)
 			vcsClient := vcsmocks.NewMockClient()
 			When(vcsClient.GetModifiedFiles(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn(c.ModifiedFiles, nil)
@@ -933,9 +935,10 @@ projects:
 		t.Run(name, func(t *testing.T) {
 			RegisterMockTestingT(t)
 			tmpDir := DirStructure(t, c.DirStructure)
+			clonedDir := MockClonedDirectory{tmpDir}
 
 			workingDir := mocks.NewMockWorkingDir()
-			When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
+			When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(&clonedDir, nil)
 			When(workingDir.GetWorkingDir(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, nil)
 			vcsClient := vcsmocks.NewMockClient()
 			When(vcsClient.GetModifiedFiles(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn(c.ModifiedFiles, nil)
@@ -1117,7 +1120,7 @@ func TestDefaultProjectCommandBuilder_WrongWorkspaceName(t *testing.T) {
 		},
 	})
 	repoDir := filepath.Join(tmpDir, "pulldir/notconfigured")
-
+	clonedDir := MockClonedDirectory{repoDir}
 	yamlCfg := `version: 3
 projects:
 - dir: .
@@ -1131,7 +1134,7 @@ projects:
 	When(workingDir.Clone(
 		Any[models.Repo](),
 		Any[models.PullRequest](),
-		Any[string]())).ThenReturn(repoDir, false, nil)
+		Any[string]())).ThenReturn(&clonedDir, nil)
 	When(workingDir.GetWorkingDir(
 		Any[models.Repo](),
 		Any[models.PullRequest](),
@@ -1219,9 +1222,10 @@ func TestDefaultProjectCommandBuilder_EscapeArgs(t *testing.T) {
 			tmpDir := DirStructure(t, map[string]interface{}{
 				"main.tf": nil,
 			})
+			clonedDir := MockClonedDirectory{tmpDir}
 
 			workingDir := mocks.NewMockWorkingDir()
-			When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
+			When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(&clonedDir, nil)
 			When(workingDir.GetWorkingDir(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, nil)
 			vcsClient := vcsmocks.NewMockClient()
 			When(vcsClient.GetModifiedFiles(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn([]string{"main.tf"}, nil)
@@ -1372,6 +1376,7 @@ projects:
 			RegisterMockTestingT(t)
 
 			tmpDir := DirStructure(t, testCase.DirStructure)
+			clonedDir := MockClonedDirectory{tmpDir}
 
 			vcsClient := vcsmocks.NewMockClient()
 			When(vcsClient.GetModifiedFiles(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn(testCase.ModifiedFiles, nil)
@@ -1380,7 +1385,7 @@ projects:
 			When(workingDir.Clone(
 				Any[models.Repo](),
 				Any[models.PullRequest](),
-				Any[string]())).ThenReturn(tmpDir, false, nil)
+				Any[string]())).ThenReturn(&clonedDir, nil)
 
 			When(workingDir.GetWorkingDir(
 				Any[models.Repo](),
@@ -1489,6 +1494,8 @@ parallel_plan: true`,
 		When(vcsClient.SupportsSingleFileDownload(Any[models.Repo]())).ThenReturn(true)
 		When(vcsClient.GetFileContent(Any[models.PullRequest](), Any[string]())).ThenReturn(true, []byte(c.AtlantisYAML), nil)
 		workingDir := mocks.NewMockWorkingDir()
+		clonedDir := MockClonedDirectory{""}
+		When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(&clonedDir, nil)
 
 		logger := logging.NewNoopLogger(t)
 
@@ -1549,12 +1556,13 @@ func TestDefaultProjectCommandBuilder_WithPolicyCheckEnabled_BuildAutoplanComman
 	tmpDir := DirStructure(t, map[string]interface{}{
 		"main.tf": nil,
 	})
+	clonedDir := MockClonedDirectory{tmpDir}
 
 	logger := logging.NewNoopLogger(t)
 	scope, _, _ := metrics.NewLoggingScope(logger, "atlantis")
 
 	workingDir := mocks.NewMockWorkingDir()
-	When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
+	When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(&clonedDir, nil)
 	vcsClient := vcsmocks.NewMockClient()
 	When(vcsClient.GetModifiedFiles(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn([]string{"main.tf"}, nil)
 

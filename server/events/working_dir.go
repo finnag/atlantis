@@ -32,6 +32,13 @@ const workingDirPrefix = "repos"
 
 var cloneLocks sync.Map
 
+// ClonedDir is a specific instance of a cloned repository
+type ClonedDir interface {
+	Git(args ...string) error
+	Dir() string
+	MergedAgain() bool
+}
+
 //go:generate pegomock generate --package mocks -o mocks/mock_working_dir.go WorkingDir
 //go:generate pegomock generate --package events WorkingDir
 
@@ -41,7 +48,7 @@ type WorkingDir interface {
 	// absolute path to the root of the cloned repo. It also returns
 	// a boolean indicating if we should warn users that the branch we're
 	// merging into has been updated since we cloned it.
-	Clone(headRepo models.Repo, p models.PullRequest, workspace string) (string, bool, error)
+	Clone(headRepo models.Repo, p models.PullRequest, workspace string) (ClonedDir, error)
 	// GetWorkingDir returns the path to the workspace for this repo and pull.
 	// If workspace does not exist on disk, error will be of type os.IsNotExist.
 	GetWorkingDir(r models.Repo, p models.PullRequest, workspace string) (string, error)
@@ -87,6 +94,44 @@ type FileWorkspace struct {
 	Logger                  logging.SimpleLogging
 }
 
+// FileClonedDir implements ClonedDir for the file system
+type FileClonedDir struct {
+	dir         string
+	repo        models.Repo
+	pr          models.PullRequest
+	mergedAgain bool
+	w           *FileWorkspace
+}
+
+func (f *FileClonedDir) Dir() string {
+	return f.dir
+}
+
+func (f *FileClonedDir) MergedAgain() bool {
+	return f.mergedAgain
+}
+
+func (f *FileClonedDir) Git(args ...string) error {
+	cmd := exec.Command("git", args...) // nolint: gosec
+	cmd.Dir = f.dir
+	// The git merge command requires these env vars are set.
+	cmd.Env = append(os.Environ(), []string{
+		"EMAIL=atlantis@runatlantis.io",
+		"GIT_AUTHOR_NAME=atlantis",
+		"GIT_COMMITTER_NAME=atlantis",
+	}...)
+
+	cmdStr := f.w.sanitizeGitCredentials(strings.Join(cmd.Args, " "), f.pr.BaseRepo, f.repo)
+	output, err := cmd.CombinedOutput()
+	sanitizedOutput := f.w.sanitizeGitCredentials(string(output), f.pr.BaseRepo, f.repo)
+	if err != nil {
+		sanitizedErrMsg := f.w.sanitizeGitCredentials(err.Error(), f.pr.BaseRepo, f.repo)
+		return fmt.Errorf("running %s: %s: %s", cmdStr, sanitizedOutput, sanitizedErrMsg)
+	}
+	f.w.Logger.Debug("ran: %s. Output: %s", cmdStr, strings.TrimSuffix(sanitizedOutput, "\n"))
+	return nil
+}
+
 // Clone git clones headRepo, checks out the branch and then returns the absolute
 // path to the root of the cloned repo. It also returns
 // a boolean indicating whether we had to merge with upstream again.
@@ -96,9 +141,17 @@ type FileWorkspace struct {
 func (w *FileWorkspace) Clone(
 	headRepo models.Repo,
 	p models.PullRequest,
-	workspace string) (string, bool, error) {
+	workspace string) (ClonedDir, error) {
 	cloneDir := w.cloneDir(p.BaseRepo, p, workspace)
 	defer func() { w.CheckForUpstreamChanges = false }()
+
+	clonedDir := &FileClonedDir{
+		dir:         cloneDir,
+		repo:        headRepo,
+		pr:          p,
+		mergedAgain: false,
+		w:           w,
+	}
 
 	// If the directory already exists, check if it's at the right commit.
 	// If so, then we do nothing.
@@ -119,7 +172,7 @@ func (w *FileWorkspace) Clone(
 		outputRevParseCmd, err := revParseCmd.CombinedOutput()
 		if err != nil {
 			w.Logger.Warn("will re-clone repo, could not determine if was at correct commit: %s: %s: %s", strings.Join(revParseCmd.Args, " "), err, string(outputRevParseCmd))
-			return cloneDir, false, w.forceClone(cloneDir, headRepo, p)
+			return clonedDir, w.forceClone(clonedDir)
 		}
 		currCommit := strings.Trim(string(outputRevParseCmd), "\n")
 
@@ -128,10 +181,11 @@ func (w *FileWorkspace) Clone(
 		if strings.HasPrefix(currCommit, p.HeadCommit) {
 			if w.CheckForUpstreamChanges && w.CheckoutMerge && w.recheckDiverged(p, headRepo, cloneDir) {
 				w.Logger.Info("base branch has been updated, using merge strategy and will clone again")
-				return cloneDir, true, w.mergeAgain(cloneDir, headRepo, p)
+				clonedDir.mergedAgain = true
+				return clonedDir, w.mergeAgain(clonedDir)
 			} else {
 				w.Logger.Debug("repo is at correct commit %q so will not re-clone", p.HeadCommit)
-				return cloneDir, false, nil
+				return clonedDir, nil
 			}
 		} else {
 			w.Logger.Debug("repo was already cloned but is not at correct commit, wanted %q got %q", p.HeadCommit, currCommit)
@@ -140,7 +194,7 @@ func (w *FileWorkspace) Clone(
 	}
 
 	// Otherwise we clone the repo.
-	return cloneDir, false, w.forceClone(cloneDir, headRepo, p)
+	return clonedDir, w.forceClone(clonedDir)
 }
 
 // recheckDiverged returns true if the branch we're merging into has diverged
@@ -209,7 +263,8 @@ func (w *FileWorkspace) HasDiverged(cloneDir string) bool {
 	return hasDiverged
 }
 
-func (w *FileWorkspace) forceClone(cloneDir string, headRepo models.Repo, p models.PullRequest) error {
+func (w *FileWorkspace) forceClone(f *FileClonedDir) error {
+	cloneDir := f.Dir()
 	value, _ := cloneLocks.LoadOrStore(cloneDir, new(sync.Mutex))
 	mutex := value.(*sync.Mutex)
 
@@ -231,48 +286,49 @@ func (w *FileWorkspace) forceClone(cloneDir string, headRepo models.Repo, p mode
 	}
 
 	// During testing, we mock some of this out.
-	headCloneURL := headRepo.CloneURL
+	headCloneURL := f.repo.CloneURL
 	if w.TestingOverrideHeadCloneURL != "" {
 		headCloneURL = w.TestingOverrideHeadCloneURL
 	}
-	baseCloneURL := p.BaseRepo.CloneURL
+	baseCloneURL := f.pr.BaseRepo.CloneURL
 	if w.TestingOverrideBaseCloneURL != "" {
 		baseCloneURL = w.TestingOverrideBaseCloneURL
 	}
 
 	// if branch strategy, use depth=1
 	if !w.CheckoutMerge {
-		return w.runGit(cloneDir, headRepo, p, "clone", "--depth=1", "--branch", p.HeadBranch, "--single-branch", headCloneURL, cloneDir)
+		return f.Git("clone", "--depth=1", "--branch", f.pr.HeadBranch, "--single-branch", headCloneURL, cloneDir)
 	}
 
 	// if merge strategy...
 
 	// if no checkout depth, omit depth arg
 	if w.CheckoutDepth == 0 {
-		if err := w.runGit(cloneDir, headRepo, p, "clone", "--branch", p.BaseBranch, "--single-branch", baseCloneURL, cloneDir); err != nil {
+		if err := f.Git("clone", "--branch", f.pr.BaseBranch, "--single-branch", baseCloneURL, cloneDir); err != nil {
 			return err
 		}
 	} else {
-		if err := w.runGit(cloneDir, headRepo, p, "clone", "--depth", fmt.Sprint(w.CheckoutDepth), "--branch", p.BaseBranch, "--single-branch", baseCloneURL, cloneDir); err != nil {
+		if err := f.Git("clone", "--depth", fmt.Sprint(w.CheckoutDepth), "--branch", f.pr.BaseBranch, "--single-branch", baseCloneURL, cloneDir); err != nil {
 			return err
 		}
 	}
 
-	if err := w.runGit(cloneDir, headRepo, p, "remote", "add", "head", headCloneURL); err != nil {
+	if err := f.Git("remote", "add", "head", headCloneURL); err != nil {
 		return err
 	}
 	if w.GpgNoSigningEnabled {
-		if err := w.runGit(cloneDir, headRepo, p, "config", "--local", "commit.gpgsign", "false"); err != nil {
+		if err := f.Git("config", "--local", "commit.gpgsign", "false"); err != nil {
 			return err
 		}
 	}
 
-	return w.mergeToBaseBranch(cloneDir, headRepo, p)
+	return w.mergeToBaseBranch(f)
 }
 
 // There is a new upstream update that we need, and we want to update to it
 // without deleting any existing plans
-func (w *FileWorkspace) mergeAgain(cloneDir string, headRepo models.Repo, p models.PullRequest) error {
+func (w *FileWorkspace) mergeAgain(f *FileClonedDir) error {
+	cloneDir := f.dir
 	value, _ := cloneLocks.LoadOrStore(cloneDir, new(sync.Mutex))
 	mutex := value.(*sync.Mutex)
 
@@ -283,58 +339,37 @@ func (w *FileWorkspace) mergeAgain(cloneDir string, headRepo models.Repo, p mode
 	}
 
 	// Reset branch as if it was cloned again
-	if err := w.runGit(cloneDir, headRepo, p, "reset", "--hard", fmt.Sprintf("refs/remotes/head/%s", p.BaseBranch)); err != nil {
+	if err := f.Git("reset", "--hard", fmt.Sprintf("refs/remotes/head/%s", f.pr.BaseBranch)); err != nil {
 		return err
 	}
 
-	return w.mergeToBaseBranch(cloneDir, headRepo, p)
-}
-
-func (w *FileWorkspace) runGit(cloneDir string, headRepo models.Repo, p models.PullRequest, args ...string) error {
-	cmd := exec.Command("git", args...) // nolint: gosec
-	cmd.Dir = cloneDir
-	// The git merge command requires these env vars are set.
-	cmd.Env = append(os.Environ(), []string{
-		"EMAIL=atlantis@runatlantis.io",
-		"GIT_AUTHOR_NAME=atlantis",
-		"GIT_COMMITTER_NAME=atlantis",
-	}...)
-
-	cmdStr := w.sanitizeGitCredentials(strings.Join(cmd.Args, " "), p.BaseRepo, headRepo)
-	output, err := cmd.CombinedOutput()
-	sanitizedOutput := w.sanitizeGitCredentials(string(output), p.BaseRepo, headRepo)
-	if err != nil {
-		sanitizedErrMsg := w.sanitizeGitCredentials(err.Error(), p.BaseRepo, headRepo)
-		return fmt.Errorf("running %s: %s: %s", cmdStr, sanitizedOutput, sanitizedErrMsg)
-	}
-	w.Logger.Debug("ran: %s. Output: %s", cmdStr, strings.TrimSuffix(sanitizedOutput, "\n"))
-	return nil
+	return w.mergeToBaseBranch(f)
 }
 
 // Merge the PR into the base branch.
-func (w *FileWorkspace) mergeToBaseBranch(cloneDir string, headRepo models.Repo, p models.PullRequest) error {
-	fetchRef := fmt.Sprintf("+refs/heads/%s:", p.HeadBranch)
+func (w *FileWorkspace) mergeToBaseBranch(f *FileClonedDir) error {
+	fetchRef := fmt.Sprintf("+refs/heads/%s:", f.pr.HeadBranch)
 	fetchRemote := "head"
 	if w.GithubAppEnabled {
-		fetchRef = fmt.Sprintf("pull/%d/head:", p.Num)
+		fetchRef = fmt.Sprintf("pull/%d/head:", f.pr.Num)
 		fetchRemote = "origin"
 	}
 
 	// if no checkout depth, omit depth arg
 	if w.CheckoutDepth == 0 {
-		if err := w.runGit(cloneDir, headRepo, p, "fetch", fetchRemote, fetchRef); err != nil {
+		if err := f.Git("fetch", fetchRemote, fetchRef); err != nil {
 			return err
 		}
 	} else {
-		if err := w.runGit(cloneDir, headRepo, p, "fetch", "--depth", fmt.Sprint(w.CheckoutDepth), fetchRemote, fetchRef); err != nil {
+		if err := f.Git("fetch", "--depth", fmt.Sprint(w.CheckoutDepth), fetchRemote, fetchRef); err != nil {
 			return err
 		}
 	}
 
-	if err := w.runGit(cloneDir, headRepo, p, "merge-base", p.BaseBranch, "FETCH_HEAD"); err != nil {
+	if err := f.Git("merge-base", f.pr.BaseBranch, "FETCH_HEAD"); err != nil {
 		// git merge-base returning error means that we did not receive enough commits in shallow clone.
 		// Fall back to retrieving full repo history.
-		if err := w.runGit(cloneDir, headRepo, p, "fetch", "--unshallow"); err != nil {
+		if err := f.Git("fetch", "--unshallow"); err != nil {
 			return err
 		}
 	}
@@ -345,7 +380,7 @@ func (w *FileWorkspace) mergeToBaseBranch(cloneDir string, headRepo models.Repo,
 	// git rev-parse HEAD^2 to get the head commit because it will
 	// always succeed whereas without --no-ff, if the merge was fast
 	// forwarded then git rev-parse HEAD^2 would fail.
-	return w.runGit(cloneDir, headRepo, p, "merge", "-q", "--no-ff", "-m", "atlantis-merge", "FETCH_HEAD")
+	return f.Git("merge", "-q", "--no-ff", "-m", "atlantis-merge", "FETCH_HEAD")
 }
 
 // GetWorkingDir returns the path to the workspace for this repo and pull.

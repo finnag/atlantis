@@ -545,19 +545,19 @@ func (p *DefaultProjectCommandRunner) doPlan(ctx command.ProjectContext) (*model
 
 	p.WorkingDir.SetCheckForUpstreamChanges()
 	// Clone is idempotent so okay to run even if the repo was already cloned.
-	repoDir, mergedAgain, cloneErr := p.WorkingDir.Clone(ctx.HeadRepo, ctx.Pull, ctx.Workspace)
+	clonedDir, cloneErr := p.WorkingDir.Clone(ctx.HeadRepo, ctx.Pull, ctx.Workspace)
 	if cloneErr != nil {
 		if unlockErr := lockAttempt.UnlockFn(); unlockErr != nil {
 			ctx.Log.Err("error unlocking state after plan error: %v", unlockErr)
 		}
 		return nil, "", cloneErr
 	}
-	projAbsPath := filepath.Join(repoDir, ctx.RepoRelDir)
+	projAbsPath := filepath.Join(clonedDir.Dir(), ctx.RepoRelDir)
 	if _, err = os.Stat(projAbsPath); os.IsNotExist(err) {
 		return nil, "", DirNotExistErr{RepoRelDir: ctx.RepoRelDir}
 	}
 
-	failure, err := p.CommandRequirementHandler.ValidatePlanProject(repoDir, ctx)
+	failure, err := p.CommandRequirementHandler.ValidatePlanProject(clonedDir.Dir(), ctx)
 	if failure != "" || err != nil {
 		return nil, failure, err
 	}
@@ -576,7 +576,7 @@ func (p *DefaultProjectCommandRunner) doPlan(ctx command.ProjectContext) (*model
 		TerraformOutput: strings.Join(outputs, "\n"),
 		RePlanCmd:       ctx.RePlanCmd,
 		ApplyCmd:        ctx.ApplyCmd,
-		MergedAgain:     mergedAgain,
+		MergedAgain:     clonedDir.MergedAgain(),
 	}, "", nil
 }
 
@@ -653,16 +653,16 @@ func (p *DefaultProjectCommandRunner) doVersion(ctx command.ProjectContext) (ver
 
 func (p *DefaultProjectCommandRunner) doImport(ctx command.ProjectContext) (out *models.ImportSuccess, failure string, err error) {
 	// Clone is idempotent so okay to run even if the repo was already cloned.
-	repoDir, _, cloneErr := p.WorkingDir.Clone(ctx.HeadRepo, ctx.Pull, ctx.Workspace)
+	clonedDir, cloneErr := p.WorkingDir.Clone(ctx.HeadRepo, ctx.Pull, ctx.Workspace)
 	if cloneErr != nil {
 		return nil, "", cloneErr
 	}
-	projAbsPath := filepath.Join(repoDir, ctx.RepoRelDir)
+	projAbsPath := filepath.Join(clonedDir.Dir(), ctx.RepoRelDir)
 	if _, err = os.Stat(projAbsPath); os.IsNotExist(err) {
 		return nil, "", DirNotExistErr{RepoRelDir: ctx.RepoRelDir}
 	}
 
-	failure, err = p.CommandRequirementHandler.ValidateImportProject(repoDir, ctx)
+	failure, err = p.CommandRequirementHandler.ValidateImportProject(clonedDir.Dir(), ctx)
 	if failure != "" || err != nil {
 		return nil, failure, err
 	}
@@ -699,11 +699,11 @@ func (p *DefaultProjectCommandRunner) doImport(ctx command.ProjectContext) (out 
 
 func (p *DefaultProjectCommandRunner) doStateRm(ctx command.ProjectContext) (out *models.StateRmSuccess, failure string, err error) {
 	// Clone is idempotent so okay to run even if the repo was already cloned.
-	repoDir, _, cloneErr := p.WorkingDir.Clone(ctx.HeadRepo, ctx.Pull, ctx.Workspace)
+	clonedDir, cloneErr := p.WorkingDir.Clone(ctx.HeadRepo, ctx.Pull, ctx.Workspace)
 	if cloneErr != nil {
 		return nil, "", cloneErr
 	}
-	projAbsPath := filepath.Join(repoDir, ctx.RepoRelDir)
+	projAbsPath := filepath.Join(clonedDir.Dir(), ctx.RepoRelDir)
 	if _, err = os.Stat(projAbsPath); os.IsNotExist(err) {
 		return nil, "", DirNotExistErr{RepoRelDir: ctx.RepoRelDir}
 	}

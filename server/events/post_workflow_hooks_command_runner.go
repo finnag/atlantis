@@ -66,7 +66,7 @@ func (w *DefaultPostWorkflowHooksCommandRunner) RunPostHooks(
 	log.Debug("got workspace lock")
 	defer unlockFn()
 
-	repoDir, _, err := w.WorkingDir.Clone(headRepo, pull, DefaultWorkspace)
+	clonedDir, err := w.WorkingDir.Clone(headRepo, pull, DefaultWorkspace)
 	if err != nil {
 		return err
 	}
@@ -87,7 +87,7 @@ func (w *DefaultPostWorkflowHooksCommandRunner) RunPostHooks(
 			EscapedCommentArgs: escapedArgs,
 			CommandName:        cmd.Name.String(),
 		},
-		postWorkflowHooks, repoDir)
+		postWorkflowHooks, clonedDir.Dir())
 
 	if err != nil {
 		return err

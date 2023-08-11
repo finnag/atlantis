@@ -63,11 +63,12 @@ func TestDefaultProjectCommandRunner_Plan(t *testing.T) {
 	}
 
 	repoDir := t.TempDir()
+	clonedDir := MockClonedDirectory{repoDir}
 	When(mockWorkingDir.Clone(
 		Any[models.Repo](),
 		Any[models.PullRequest](),
 		Any[string](),
-	)).ThenReturn(repoDir, false, nil)
+	)).ThenReturn(&clonedDir, nil)
 	When(mockLocker.TryLock(
 		Any[logging.SimpleLogging](),
 		Any[models.PullRequest](),
@@ -560,11 +561,12 @@ func TestDefaultProjectCommandRunner_RunEnvSteps(t *testing.T) {
 	}
 
 	repoDir := t.TempDir()
+	clonedDir := MockClonedDirectory{repoDir}
 	When(mockWorkingDir.Clone(
 		Any[models.Repo](),
 		Any[models.PullRequest](),
 		Any[string](),
-	)).ThenReturn(repoDir, false, nil)
+	)).ThenReturn(&clonedDir, nil)
 	When(mockLocker.TryLock(
 		Any[logging.SimpleLogging](),
 		Any[models.PullRequest](),
@@ -714,11 +716,12 @@ func TestDefaultProjectCommandRunner_Import(t *testing.T) {
 				RePlanCmd:          "atlantis plan -d . -- addr id",
 			}
 			repoDir := t.TempDir()
+			clonedDir := MockClonedDirectory{repoDir}
 			When(mockWorkingDir.Clone(
 				Any[models.Repo](),
 				Any[models.PullRequest](),
 				Any[string](),
-			)).ThenReturn(repoDir, false, nil)
+			)).ThenReturn(&clonedDir, nil)
 			if c.setup != nil {
 				c.setup(repoDir, ctx, mockLocker, mockInit, mockImport)
 			}

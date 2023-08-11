@@ -341,10 +341,11 @@ func (p *DefaultProjectCommandBuilder) buildAllCommandsByCfg(ctx *command.Contex
 	ctx.Log.Debug("got workspace lock")
 	defer unlockFn()
 
-	repoDir, _, err := p.WorkingDir.Clone(ctx.HeadRepo, ctx.Pull, workspace)
+	clonedDir, err := p.WorkingDir.Clone(ctx.HeadRepo, ctx.Pull, workspace)
 	if err != nil {
 		return nil, err
 	}
+	repoDir := clonedDir.Dir()
 
 	// Parse config file if it exists.
 	repoCfgFile := p.GlobalCfg.RepoConfigFile(ctx.Pull.BaseRepo.ID())
@@ -536,7 +537,8 @@ func (p *DefaultProjectCommandBuilder) buildProjectPlanCommand(ctx *command.Cont
 	defer unlockFn()
 
 	ctx.Log.Debug("cloning repository")
-	_, _, err = p.WorkingDir.Clone(ctx.HeadRepo, ctx.Pull, workspace)
+	// @@@ todo: How does it know the directory here?
+	_, err = p.WorkingDir.Clone(ctx.HeadRepo, ctx.Pull, workspace)
 	if err != nil {
 		return pcc, err
 	}
