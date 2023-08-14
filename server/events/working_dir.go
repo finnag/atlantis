@@ -98,6 +98,13 @@ func (w *FileWorkspace) Clone(
 	p models.PullRequest,
 	workspace string) (string, bool, error) {
 	cloneDir := w.cloneDir(p.BaseRepo, p, workspace)
+
+	// Unconditionally wait for the clone lock here, if anyone else is doing any clone
+	// operation in this directory, we wait for it to finish before we check anything.
+	value, _ := cloneLocks.LoadOrStore(cloneDir, new(sync.Mutex))
+	mutex := value.(*sync.Mutex)
+	mutex.Lock()
+	defer mutex.Unlock()
 	defer func() { w.CheckForUpstreamChanges = false }()
 
 	c := wrappedGitContext{cloneDir, headRepo, p}
@@ -211,15 +218,6 @@ func (w *FileWorkspace) HasDiverged(cloneDir string) bool {
 }
 
 func (w *FileWorkspace) forceClone(c wrappedGitContext) error {
-	value, _ := cloneLocks.LoadOrStore(c.dir, new(sync.Mutex))
-	mutex := value.(*sync.Mutex)
-
-	defer mutex.Unlock()
-	if locked := mutex.TryLock(); !locked {
-		mutex.Lock()
-		return nil
-	}
-
 	err := os.RemoveAll(c.dir)
 	if err != nil {
 		return errors.Wrapf(err, "deleting dir %q before cloning", c.dir)
@@ -274,15 +272,6 @@ func (w *FileWorkspace) forceClone(c wrappedGitContext) error {
 // There is a new upstream update that we need, and we want to update to it
 // without deleting any existing plans
 func (w *FileWorkspace) mergeAgain(c wrappedGitContext) error {
-	value, _ := cloneLocks.LoadOrStore(c.dir, new(sync.Mutex))
-	mutex := value.(*sync.Mutex)
-
-	defer mutex.Unlock()
-	if locked := mutex.TryLock(); !locked {
-		mutex.Lock()
-		return nil
-	}
-
 	// Reset branch as if it was cloned again
 	if err := w.wrappedGit(c, "reset", "--hard", fmt.Sprintf("refs/remotes/head/%s", c.pr.BaseBranch)); err != nil {
 		return err
