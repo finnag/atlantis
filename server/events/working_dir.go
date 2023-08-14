@@ -41,7 +41,7 @@ type WorkingDir interface {
 	// absolute path to the root of the cloned repo. It also returns
 	// a boolean indicating if we should warn users that the branch we're
 	// merging into has been updated since we cloned it.
-	Clone(headRepo models.Repo, p models.PullRequest, workspace string) (string, bool, error)
+	Clone(headRepo models.Repo, p models.PullRequest, workspace string, shouldRecheckUpstream bool) (string, bool, error)
 	// GetWorkingDir returns the path to the workspace for this repo and pull.
 	// If workspace does not exist on disk, error will be of type os.IsNotExist.
 	GetWorkingDir(r models.Repo, p models.PullRequest, workspace string) (string, error)
@@ -50,10 +50,6 @@ type WorkingDir interface {
 	// Delete deletes the workspace for this repo and pull.
 	Delete(r models.Repo, p models.PullRequest) error
 	DeleteForWorkspace(r models.Repo, p models.PullRequest, workspace string) error
-	// Set a flag in the workingdir so Clone() can know that it is safe to re-clone the workingdir if
-	// the upstream branch has been modified. This is only safe after grabbing the project lock
-	// and before running any plans
-	SetCheckForUpstreamChanges()
 	// DeletePlan deletes the plan for this repo, pull, workspace path and project name
 	DeletePlan(r models.Repo, p models.PullRequest, workspace string, path string, projectName string) error
 	// GetGitUntrackedFiles returns a list of Git untracked files in the working dir.
@@ -84,9 +80,7 @@ type FileWorkspace struct {
 	GithubAppEnabled bool
 	// use the global setting without overriding
 	GpgNoSigningEnabled bool
-	// flag indicating if we have to merge with potential new changes upstream (directly after grabbing project lock)
-	CheckForUpstreamChanges bool
-	Logger                  logging.SimpleLogging
+	Logger              logging.SimpleLogging
 }
 
 // Clone git clones headRepo, checks out the branch and then returns the absolute
@@ -98,7 +92,8 @@ type FileWorkspace struct {
 func (w *FileWorkspace) Clone(
 	headRepo models.Repo,
 	p models.PullRequest,
-	workspace string) (string, bool, error) {
+	workspace string,
+	mustRecheckUpstream bool) (string, bool, error) {
 	cloneDir := w.cloneDir(p.BaseRepo, p, workspace)
 
 	// Unconditionally wait for the clone lock here, if anyone else is doing any clone
@@ -107,7 +102,6 @@ func (w *FileWorkspace) Clone(
 	mutex := value.(*sync.Mutex)
 	mutex.Lock()
 	defer mutex.Unlock()
-	defer func() { w.CheckForUpstreamChanges = false }()
 
 	c := wrappedGitContext{cloneDir, headRepo, p}
 	// If the directory already exists, check if it's at the right commit.
@@ -136,7 +130,7 @@ func (w *FileWorkspace) Clone(
 		// We're prefix matching here because BitBucket doesn't give us the full
 		// commit, only a 12 character prefix.
 		if strings.HasPrefix(currCommit, p.HeadCommit) {
-			if w.CheckForUpstreamChanges && w.CheckoutMerge && w.recheckDiverged(p, headRepo, cloneDir) {
+			if mustRecheckUpstream && w.CheckoutMerge && w.recheckDiverged(p, headRepo, cloneDir) {
 				w.Logger.Info("base branch has been updated, using merge strategy and will clone again")
 				return cloneDir, true, w.mergeAgain(c)
 			} else {
@@ -395,11 +389,6 @@ func (w *FileWorkspace) cloneDir(r models.Repo, p models.PullRequest, workspace 
 func (w *FileWorkspace) sanitizeGitCredentials(s string, base models.Repo, head models.Repo) string {
 	baseReplaced := strings.Replace(s, base.CloneURL, base.SanitizedCloneURL, -1)
 	return strings.Replace(baseReplaced, head.CloneURL, head.SanitizedCloneURL, -1)
-}
-
-// Set the flag that indicates we need to check for upstream changes (if using merge checkout strategy)
-func (w *FileWorkspace) SetCheckForUpstreamChanges() {
-	w.CheckForUpstreamChanges = true
 }
 
 func (w *FileWorkspace) DeletePlan(r models.Repo, p models.PullRequest, workspace string, projectPath string, projectName string) error {

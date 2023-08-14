@@ -25,11 +25,11 @@ func NewMockWorkingDir(options ...pegomock.Option) *MockWorkingDir {
 func (mock *MockWorkingDir) SetFailHandler(fh pegomock.FailHandler) { mock.fail = fh }
 func (mock *MockWorkingDir) FailHandler() pegomock.FailHandler      { return mock.fail }
 
-func (mock *MockWorkingDir) Clone(headRepo models.Repo, p models.PullRequest, workspace string) (string, bool, error) {
+func (mock *MockWorkingDir) Clone(headRepo models.Repo, p models.PullRequest, workspace string, shouldRecheckUpstream bool) (string, bool, error) {
 	if mock == nil {
 		panic("mock must not be nil. Use myMock := NewMockWorkingDir().")
 	}
-	params := []pegomock.Param{headRepo, p, workspace}
+	params := []pegomock.Param{headRepo, p, workspace, shouldRecheckUpstream}
 	result := pegomock.GetGenericMockFrom(mock).Invoke("Clone", params, []reflect.Type{reflect.TypeOf((*string)(nil)).Elem(), reflect.TypeOf((*bool)(nil)).Elem(), reflect.TypeOf((*error)(nil)).Elem()})
 	var ret0 string
 	var ret1 bool
@@ -165,14 +165,6 @@ func (mock *MockWorkingDir) HasDiverged(cloneDir string) bool {
 	return ret0
 }
 
-func (mock *MockWorkingDir) SetCheckForUpstreamChanges() {
-	if mock == nil {
-		panic("mock must not be nil. Use myMock := NewMockWorkingDir().")
-	}
-	params := []pegomock.Param{}
-	pegomock.GetGenericMockFrom(mock).Invoke("SetCheckForUpstreamChanges", params, []reflect.Type{})
-}
-
 func (mock *MockWorkingDir) VerifyWasCalledOnce() *VerifierMockWorkingDir {
 	return &VerifierMockWorkingDir{
 		mock:                   mock,
@@ -210,8 +202,8 @@ type VerifierMockWorkingDir struct {
 	timeout                time.Duration
 }
 
-func (verifier *VerifierMockWorkingDir) Clone(headRepo models.Repo, p models.PullRequest, workspace string) *MockWorkingDir_Clone_OngoingVerification {
-	params := []pegomock.Param{headRepo, p, workspace}
+func (verifier *VerifierMockWorkingDir) Clone(headRepo models.Repo, p models.PullRequest, workspace string, shouldRecheckUpstream bool) *MockWorkingDir_Clone_OngoingVerification {
+	params := []pegomock.Param{headRepo, p, workspace, shouldRecheckUpstream}
 	methodInvocations := pegomock.GetGenericMockFrom(verifier.mock).Verify(verifier.inOrderContext, verifier.invocationCountMatcher, "Clone", params, verifier.timeout)
 	return &MockWorkingDir_Clone_OngoingVerification{mock: verifier.mock, methodInvocations: methodInvocations}
 }
@@ -221,12 +213,12 @@ type MockWorkingDir_Clone_OngoingVerification struct {
 	methodInvocations []pegomock.MethodInvocation
 }
 
-func (c *MockWorkingDir_Clone_OngoingVerification) GetCapturedArguments() (models.Repo, models.PullRequest, string) {
-	headRepo, p, workspace := c.GetAllCapturedArguments()
-	return headRepo[len(headRepo)-1], p[len(p)-1], workspace[len(workspace)-1]
+func (c *MockWorkingDir_Clone_OngoingVerification) GetCapturedArguments() (models.Repo, models.PullRequest, string, bool) {
+	headRepo, p, workspace, shouldRecheckUpstream := c.GetAllCapturedArguments()
+	return headRepo[len(headRepo)-1], p[len(p)-1], workspace[len(workspace)-1], shouldRecheckUpstream[len(shouldRecheckUpstream)-1]
 }
 
-func (c *MockWorkingDir_Clone_OngoingVerification) GetAllCapturedArguments() (_param0 []models.Repo, _param1 []models.PullRequest, _param2 []string) {
+func (c *MockWorkingDir_Clone_OngoingVerification) GetAllCapturedArguments() (_param0 []models.Repo, _param1 []models.PullRequest, _param2 []string, _param3 []bool) {
 	params := pegomock.GetGenericMockFrom(c.mock).GetInvocationParams(c.methodInvocations)
 	if len(params) > 0 {
 		_param0 = make([]models.Repo, len(c.methodInvocations))
@@ -240,6 +232,10 @@ func (c *MockWorkingDir_Clone_OngoingVerification) GetAllCapturedArguments() (_p
 		_param2 = make([]string, len(c.methodInvocations))
 		for u, param := range params[2] {
 			_param2[u] = param.(string)
+		}
+		_param3 = make([]bool, len(c.methodInvocations))
+		for u, param := range params[3] {
+			_param3[u] = param.(bool)
 		}
 	}
 	return
@@ -480,21 +476,4 @@ func (c *MockWorkingDir_HasDiverged_OngoingVerification) GetAllCapturedArguments
 		}
 	}
 	return
-}
-
-func (verifier *VerifierMockWorkingDir) SetCheckForUpstreamChanges() *MockWorkingDir_SetCheckForUpstreamChanges_OngoingVerification {
-	params := []pegomock.Param{}
-	methodInvocations := pegomock.GetGenericMockFrom(verifier.mock).Verify(verifier.inOrderContext, verifier.invocationCountMatcher, "SetCheckForUpstreamChanges", params, verifier.timeout)
-	return &MockWorkingDir_SetCheckForUpstreamChanges_OngoingVerification{mock: verifier.mock, methodInvocations: methodInvocations}
-}
-
-type MockWorkingDir_SetCheckForUpstreamChanges_OngoingVerification struct {
-	mock              *MockWorkingDir
-	methodInvocations []pegomock.MethodInvocation
-}
-
-func (c *MockWorkingDir_SetCheckForUpstreamChanges_OngoingVerification) GetCapturedArguments() {
-}
-
-func (c *MockWorkingDir_SetCheckForUpstreamChanges_OngoingVerification) GetAllCapturedArguments() {
 }
