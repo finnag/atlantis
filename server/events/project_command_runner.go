@@ -225,7 +225,7 @@ type DefaultProjectCommandRunner struct {
 func (p *DefaultProjectCommandRunner) Plan(ctx command.ProjectContext) command.ProjectResult {
 	planSuccess, failure, err := p.doPlan(ctx)
 	return command.ProjectResult{
-		Command:     command.Plan,
+		Command:     ctx.CommandName,
 		PlanSuccess: planSuccess,
 		Error:       err,
 		Failure:     failure,

@@ -209,7 +209,7 @@ func (p *planStepRunner) runRemotePlan(
 
 	// updateStatusF will update the commit status and log any error.
 	updateStatusF := func(status models.CommitStatus, url string) {
-		if err := p.CommitStatusUpdater.UpdateProject(ctx, command.Plan, status, url, nil); err != nil {
+		if err := p.CommitStatusUpdater.UpdateProject(ctx, ctx.CommandName, status, url, nil); err != nil {
 			ctx.Log.Err("unable to update status: %s", err)
 		}
 	}
