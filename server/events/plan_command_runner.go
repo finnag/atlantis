@@ -226,7 +226,7 @@ func (p *PlanCommandRunner) run(ctx *command.Context, cmd *CommentCommand) {
 				// the Atlantis status to be passing for all pull requests.
 				// Does not apply to skipped runs for specific projects
 				ctx.Log.Debug("setting VCS status to success with no projects found")
-				if err := p.commitStatusUpdater.UpdateCombinedCount(ctx.Log, baseRepo, pull, models.SuccessCommitStatus, cmd.Name 0, 0); err != nil {
+				if err := p.commitStatusUpdater.UpdateCombinedCount(ctx.Log, baseRepo, pull, models.SuccessCommitStatus, cmd.Name, 0, 0); err != nil {
 					ctx.Log.Warn("unable to update commit status: %s", err)
 				}
 				if err := p.commitStatusUpdater.UpdateCombinedCount(ctx.Log, baseRepo, pull, models.SuccessCommitStatus, command.PolicyCheck, 0, 0); err != nil {
