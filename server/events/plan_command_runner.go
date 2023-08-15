@@ -312,7 +312,7 @@ func (p *PlanCommandRunner) updateCommitStatus(ctx *command.Context, pullStatus 
 	var numErrored int
 	status := models.SuccessCommitStatus
 
-	if commandName == command.Plan {
+	if commandName == command.Plan || commandName == command.DraftPlan {
 		numErrored = pullStatus.StatusCount(models.ErroredPlanStatus)
 		// We consider anything that isn't a plan error as a plan success.
 		// For example, if there is an apply error, that means that at least a
