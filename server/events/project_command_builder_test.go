@@ -22,6 +22,30 @@ import (
 	. "github.com/runatlantis/atlantis/testing"
 )
 
+var defaultUserConfig = struct {
+	SkipCloneNoChanges       bool
+	EnableRegExpCmd          bool
+	EnableAutoMerge          bool
+	EnableParallelPlan       bool
+	EnableParallelApply      bool
+	AutoDetectModuleFiles    string
+	AutoplanFileList         string
+	RestrictFileList         bool
+	SilenceNoProjects        bool
+	IncludeGitUntrackedFiles bool
+}{
+	SkipCloneNoChanges:       false,
+	EnableRegExpCmd:          false,
+	EnableAutoMerge:          false,
+	EnableParallelPlan:       false,
+	EnableParallelApply:      false,
+	AutoDetectModuleFiles:    "",
+	AutoplanFileList:         "**/*.tf,**/*.tfvars,**/*.tfvars.json,**/terragrunt.hcl,**/.terraform.lock.hcl",
+	RestrictFileList:         false,
+	SilenceNoProjects:        false,
+	IncludeGitUntrackedFiles: true,
+}
+
 func TestDefaultProjectCommandBuilder_BuildAutoplanCommands(t *testing.T) {
 	// expCtxFields define the ctx fields we're going to assert on.
 	// Since we're focused on autoplanning here, we don't validate all the
@@ -122,6 +146,7 @@ projects:
 
 	logger := logging.NewNoopLogger(t)
 	scope, _, _ := metrics.NewLoggingScope(logger, "atlantis")
+	userConfig := defaultUserConfig
 
 	terraformClient := terraform_mocks.NewMockClient()
 	When(terraformClient.ListAvailableVersions(Any[logging.SimpleLogging]())).ThenReturn([]string{}, nil)
@@ -134,7 +159,7 @@ projects:
 			})
 
 			workingDir := mocks.NewMockWorkingDir()
-			When(workingDir.Clone(Any[logging.SimpleLogging](), Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
+			When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
 			vcsClient := vcsmocks.NewMockClient()
 			When(vcsClient.GetModifiedFiles(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn([]string{"main.tf"}, nil)
 			if c.AtlantisYAML != "" {
@@ -159,12 +184,16 @@ projects:
 				valid.NewGlobalCfgFromArgs(globalCfgArgs),
 				&events.DefaultPendingPlanFinder{},
 				&events.CommentParser{ExecutableName: "atlantis"},
-				false,
-				false,
-				"",
-				"**/*.tf,**/*.tfvars,**/*.tfvars.json,**/terragrunt.hcl,**/.terraform.lock.hcl",
-				false,
-				false,
+				userConfig.SkipCloneNoChanges,
+				userConfig.EnableRegExpCmd,
+				userConfig.EnableAutoMerge,
+				userConfig.EnableParallelPlan,
+				userConfig.EnableParallelApply,
+				userConfig.AutoDetectModuleFiles,
+				userConfig.AutoplanFileList,
+				userConfig.RestrictFileList,
+				userConfig.SilenceNoProjects,
+				userConfig.IncludeGitUntrackedFiles,
 				scope,
 				logger,
 				terraformClient,
@@ -192,19 +221,23 @@ projects:
 // Test building a plan and apply command for one project.
 func TestDefaultProjectCommandBuilder_BuildSinglePlanApplyCommand(t *testing.T) {
 	cases := []struct {
-		Description      string
-		AtlantisYAML     string
-		Cmd              events.CommentCommand
-		Silenced         bool
-		ExpCommentArgs   []string
-		ExpWorkspace     string
-		ExpDir           string
-		ExpProjectName   string
-		ExpErr           string
-		ExpApplyReqs     []string
-		ExpParallelApply bool
-		ExpParallelPlan  bool
-		ExpNoProjects    bool
+		Description                string
+		AtlantisYAML               string
+		Cmd                        events.CommentCommand
+		Silenced                   bool
+		ExpCommentArgs             []string
+		ExpWorkspace               string
+		ExpDir                     string
+		ExpProjectName             string
+		ExpErr                     string
+		ExpApplyReqs               []string
+		EnableAutoMergeUserCfg     bool
+		EnableParallelPlanUserCfg  bool
+		EnableParallelApplyUserCfg bool
+		ExpAutoMerge               bool
+		ExpParallelPlan            bool
+		ExpParallelApply           bool
+		ExpNoProjects              bool
 	}{
 		{
 			Description: "no atlantis.yaml",
@@ -407,10 +440,66 @@ projects:
 			ExpProjectName:   "myproject",
 			ExpApplyReqs:     []string{},
 		},
+		{
+			Description: "atlantis.yaml with ParallelPlan/apply and Automerge not set, but set in user conf",
+			Cmd: events.CommentCommand{
+				Name:        command.Plan,
+				RepoRelDir:  ".",
+				Workspace:   "default",
+				ProjectName: "myproject",
+			},
+			AtlantisYAML: `
+version: 3
+projects:
+- name: myproject
+  dir: .
+  workspace: myworkspace
+`,
+			EnableAutoMergeUserCfg:     true,
+			EnableParallelPlanUserCfg:  true,
+			EnableParallelApplyUserCfg: true,
+			ExpAutoMerge:               true,
+			ExpParallelPlan:            true,
+			ExpParallelApply:           true,
+			ExpDir:                     ".",
+			ExpWorkspace:               "myworkspace",
+			ExpProjectName:             "myproject",
+			ExpApplyReqs:               []string{},
+		},
+		{
+			Description: "atlantis.yaml with ParallelPlan/apply and Automerge set to false, but set to true in user conf",
+			Cmd: events.CommentCommand{
+				Name:        command.Plan,
+				RepoRelDir:  ".",
+				Workspace:   "default",
+				ProjectName: "myproject",
+			},
+			AtlantisYAML: `
+version: 3
+automerge: false
+parallel_plan: false
+parallel_apply: false
+projects:
+- name: myproject
+  dir: .
+  workspace: myworkspace
+`,
+			EnableAutoMergeUserCfg:     true,
+			EnableParallelPlanUserCfg:  true,
+			EnableParallelApplyUserCfg: true,
+			ExpAutoMerge:               false,
+			ExpParallelPlan:            false,
+			ExpParallelApply:           false,
+			ExpDir:                     ".",
+			ExpWorkspace:               "myworkspace",
+			ExpProjectName:             "myproject",
+			ExpApplyReqs:               []string{},
+		},
 	}
 
 	logger := logging.NewNoopLogger(t)
 	scope, _, _ := metrics.NewLoggingScope(logger, "atlantis")
+	userConfig := defaultUserConfig
 
 	for _, c := range cases {
 		// NOTE: we're testing both plan and apply here.
@@ -422,7 +511,7 @@ projects:
 				})
 
 				workingDir := mocks.NewMockWorkingDir()
-				When(workingDir.Clone(Any[logging.SimpleLogging](), Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
+				When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
 				When(workingDir.GetWorkingDir(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, nil)
 				vcsClient := vcsmocks.NewMockClient()
 				When(vcsClient.GetModifiedFiles(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn([]string{"main.tf"}, nil)
@@ -451,12 +540,16 @@ projects:
 					valid.NewGlobalCfgFromArgs(globalCfgArgs),
 					&events.DefaultPendingPlanFinder{},
 					&events.CommentParser{ExecutableName: "atlantis"},
-					false,
-					true,
-					"",
-					"**/*.tf,**/*.tfvars,**/*.tfvars.json,**/terragrunt.hcl,**/.terraform.lock.hcl",
-					false,
+					userConfig.SkipCloneNoChanges,
+					userConfig.EnableRegExpCmd,
+					c.EnableAutoMergeUserCfg,
+					c.EnableParallelPlanUserCfg,
+					c.EnableParallelApplyUserCfg,
+					userConfig.AutoDetectModuleFiles,
+					userConfig.AutoplanFileList,
+					userConfig.RestrictFileList,
 					c.Silenced,
+					userConfig.IncludeGitUntrackedFiles,
 					scope,
 					logger,
 					terraformClient,
@@ -489,8 +582,9 @@ projects:
 				Equals(t, c.ExpCommentArgs, actCtx.EscapedCommentArgs)
 				Equals(t, c.ExpProjectName, actCtx.ProjectName)
 				Equals(t, c.ExpApplyReqs, actCtx.ApplyRequirements)
-				Equals(t, c.ExpParallelApply, actCtx.ParallelApplyEnabled)
+				Equals(t, c.ExpAutoMerge, actCtx.AutomergeEnabled)
 				Equals(t, c.ExpParallelPlan, actCtx.ParallelPlanEnabled)
+				Equals(t, c.ExpParallelApply, actCtx.ParallelApplyEnabled)
 			})
 		}
 	}
@@ -597,6 +691,8 @@ projects:
 
 	logger := logging.NewNoopLogger(t)
 	scope, _, _ := metrics.NewLoggingScope(logger, "atlantis")
+	userConfig := defaultUserConfig
+	userConfig.RestrictFileList = true
 
 	for _, c := range cases {
 		t.Run(c.Description+"_"+command.Plan.String(), func(t *testing.T) {
@@ -604,7 +700,7 @@ projects:
 			tmpDir := DirStructure(t, c.DirectoryStructure)
 
 			workingDir := mocks.NewMockWorkingDir()
-			When(workingDir.Clone(Any[logging.SimpleLogging](), Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
+			When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
 			When(workingDir.GetWorkingDir(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, nil)
 			vcsClient := vcsmocks.NewMockClient()
 			When(vcsClient.GetModifiedFiles(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn(c.ModifiedFiles, nil)
@@ -633,12 +729,16 @@ projects:
 				valid.NewGlobalCfgFromArgs(globalCfgArgs),
 				&events.DefaultPendingPlanFinder{},
 				&events.CommentParser{ExecutableName: "atlantis"},
-				false,
-				true,
-				"",
-				"**/*.tf,**/*.tfvars,**/*.tfvars.json,**/terragrunt.hcl,**/.terraform.lock.hcl",
-				true,
-				false,
+				userConfig.SkipCloneNoChanges,
+				userConfig.EnableRegExpCmd,
+				userConfig.EnableAutoMerge,
+				userConfig.EnableParallelPlan,
+				userConfig.EnableParallelApply,
+				userConfig.AutoDetectModuleFiles,
+				userConfig.AutoplanFileList,
+				userConfig.RestrictFileList,
+				userConfig.SilenceNoProjects,
+				userConfig.IncludeGitUntrackedFiles,
 				scope,
 				logger,
 				terraformClient,
@@ -666,18 +766,21 @@ func TestDefaultProjectCommandBuilder_BuildPlanCommands(t *testing.T) {
 	// Since we're focused on autoplanning here, we don't validate all the
 	// fields so the tests are more obvious and targeted.
 	type expCtxFields struct {
-		ProjectName          string
-		RepoRelDir           string
-		Workspace            string
-		Automerge            bool
-		ParallelPlanEnabled  bool
-		ParallelApplyEnabled bool
+		ProjectName      string
+		RepoRelDir       string
+		Workspace        string
+		Automerge        bool
+		ExpParallelPlan  bool
+		ExpParallelApply bool
 	}
 	cases := map[string]struct {
-		DirStructure  map[string]interface{}
-		AtlantisYAML  string
-		ModifiedFiles []string
-		Exp           []expCtxFields
+		AutoMergeUserCfg            bool
+		ParallelPlanEnabledUserCfg  bool
+		ParallelApplyEnabledUserCfg bool
+		DirStructure                map[string]interface{}
+		AtlantisYAML                string
+		ModifiedFiles               []string
+		Exp                         []expCtxFields
 	}{
 		"no atlantis.yaml": {
 			DirStructure: map[string]interface{}{
@@ -702,7 +805,7 @@ func TestDefaultProjectCommandBuilder_BuildPlanCommands(t *testing.T) {
 				},
 			},
 		},
-		"no projects in atlantis.yaml": {
+		"no projects in atlantis.yaml with parallel operations in atlantis.yaml": {
 			DirStructure: map[string]interface{}{
 				"project1": map[string]interface{}{
 					"main.tf": nil,
@@ -720,20 +823,93 @@ parallel_apply: true
 			ModifiedFiles: []string{"project1/main.tf", "project2/main.tf"},
 			Exp: []expCtxFields{
 				{
-					ProjectName:          "",
-					RepoRelDir:           "project1",
-					Workspace:            "default",
-					Automerge:            true,
-					ParallelApplyEnabled: true,
-					ParallelPlanEnabled:  true,
+					ProjectName:      "",
+					RepoRelDir:       "project1",
+					Workspace:        "default",
+					Automerge:        true,
+					ExpParallelApply: true,
+					ExpParallelPlan:  true,
 				},
 				{
-					ProjectName:          "",
-					RepoRelDir:           "project2",
-					Workspace:            "default",
-					Automerge:            true,
-					ParallelApplyEnabled: true,
-					ParallelPlanEnabled:  true,
+					ProjectName:      "",
+					RepoRelDir:       "project2",
+					Workspace:        "default",
+					Automerge:        true,
+					ExpParallelApply: true,
+					ExpParallelPlan:  true,
+				},
+			},
+		},
+		"no projects in atlantis.yaml with parallel operations and automerge not in atlantis.yaml, but in user conf": {
+			DirStructure: map[string]interface{}{
+				"project1": map[string]interface{}{
+					"main.tf": nil,
+				},
+				"project2": map[string]interface{}{
+					"main.tf": nil,
+				},
+			},
+			AtlantisYAML: `
+version: 3
+`,
+			AutoMergeUserCfg:            true,
+			ParallelPlanEnabledUserCfg:  true,
+			ParallelApplyEnabledUserCfg: true,
+			ModifiedFiles:               []string{"project1/main.tf", "project2/main.tf"},
+			Exp: []expCtxFields{
+				{
+					ProjectName:      "",
+					RepoRelDir:       "project1",
+					Workspace:        "default",
+					Automerge:        true,
+					ExpParallelApply: true,
+					ExpParallelPlan:  true,
+				},
+				{
+					ProjectName:      "",
+					RepoRelDir:       "project2",
+					Workspace:        "default",
+					Automerge:        true,
+					ExpParallelApply: true,
+					ExpParallelPlan:  true,
+				},
+			},
+		},
+		"no projects in atlantis.yaml with parallel operations and automerge set to false in atlantis.yaml and true in user conf": {
+			DirStructure: map[string]interface{}{
+				"project1": map[string]interface{}{
+					"main.tf": nil,
+				},
+				"project2": map[string]interface{}{
+					"main.tf": nil,
+				},
+			},
+			AtlantisYAML: `
+version: 3
+automerge: false
+parallel_plan: false
+parallel_apply: false
+`,
+			AutoMergeUserCfg:            true,
+			ParallelPlanEnabledUserCfg:  true,
+			ParallelApplyEnabledUserCfg: true,
+			ModifiedFiles:               []string{"project1/main.tf", "project2/main.tf"},
+			Exp: []expCtxFields{
+				{
+					ProjectName:      "",
+					RepoRelDir:       "project1",
+					Workspace:        "default",
+					Automerge:        false,
+					ExpParallelApply: false,
+					ExpParallelPlan:  false,
+				},
+				{
+					ProjectName:      "",
+					RepoRelDir:       "project2",
+					Workspace:        "default",
+					Automerge:        false,
+					ExpParallelApply: false,
+					ExpParallelPlan:  false,
 				},
 			},
 		},
@@ -784,13 +960,15 @@ projects:
 
 	logger := logging.NewNoopLogger(t)
 	scope, _, _ := metrics.NewLoggingScope(logger, "atlantis")
+	userConfig := defaultUserConfig
+
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			RegisterMockTestingT(t)
 			tmpDir := DirStructure(t, c.DirStructure)
 
 			workingDir := mocks.NewMockWorkingDir()
-			When(workingDir.Clone(Any[logging.SimpleLogging](), Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
+			When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
 			When(workingDir.GetWorkingDir(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, nil)
 			vcsClient := vcsmocks.NewMockClient()
 			When(vcsClient.GetModifiedFiles(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn(c.ModifiedFiles, nil)
@@ -819,12 +997,16 @@ projects:
 				valid.NewGlobalCfgFromArgs(globalCfgArgs),
 				&events.DefaultPendingPlanFinder{},
 				&events.CommentParser{ExecutableName: "atlantis"},
-				false,
-				false,
-				"",
-				"**/*.tf,**/*.tfvars,**/*.tfvars.json,**/terragrunt.hcl,**/.terraform.lock.hcl",
-				false,
-				false,
+				userConfig.SkipCloneNoChanges,
+				userConfig.EnableRegExpCmd,
+				userConfig.EnableAutoMerge,
+				c.ParallelPlanEnabledUserCfg,
+				c.ParallelApplyEnabledUserCfg,
+				userConfig.AutoDetectModuleFiles,
+				userConfig.AutoplanFileList,
+				userConfig.RestrictFileList,
+				userConfig.SilenceNoProjects,
+				userConfig.IncludeGitUntrackedFiles,
 				scope,
 				logger,
 				terraformClient,
@@ -850,8 +1032,8 @@ projects:
 				Equals(t, expCtx.ProjectName, actCtx.ProjectName)
 				Equals(t, expCtx.RepoRelDir, actCtx.RepoRelDir)
 				Equals(t, expCtx.Workspace, actCtx.Workspace)
-				Equals(t, expCtx.ParallelPlanEnabled, actCtx.ParallelPlanEnabled)
-				Equals(t, expCtx.ParallelApplyEnabled, actCtx.ParallelApplyEnabled)
+				Equals(t, expCtx.ExpParallelPlan, actCtx.ParallelPlanEnabled)
+				Equals(t, expCtx.ExpParallelApply, actCtx.ParallelApplyEnabled)
 			}
 		})
 	}
@@ -896,6 +1078,7 @@ func TestDefaultProjectCommandBuilder_BuildMultiApply(t *testing.T) {
 		ThenReturn(tmpDir, nil)
 
 	logger := logging.NewNoopLogger(t)
+	userConfig := defaultUserConfig
 
 	globalCfgArgs := valid.GlobalCfgArgs{
 		AllowRepoCfg:  false,
@@ -918,12 +1101,16 @@ func TestDefaultProjectCommandBuilder_BuildMultiApply(t *testing.T) {
 		valid.NewGlobalCfgFromArgs(globalCfgArgs),
 		&events.DefaultPendingPlanFinder{},
 		&events.CommentParser{ExecutableName: "atlantis"},
-		false,
-		false,
-		"",
-		"**/*.tf,**/*.tfvars,**/*.tfvars.json,**/terragrunt.hcl,**/.terraform.lock.hcl",
-		false,
-		false,
+		userConfig.SkipCloneNoChanges,
+		userConfig.EnableRegExpCmd,
+		userConfig.EnableAutoMerge,
+		userConfig.EnableParallelPlan,
+		userConfig.EnableParallelApply,
+		userConfig.AutoDetectModuleFiles,
+		userConfig.AutoplanFileList,
+		userConfig.RestrictFileList,
+		userConfig.SilenceNoProjects,
+		userConfig.IncludeGitUntrackedFiles,
 		scope,
 		logger,
 		terraformClient,
@@ -978,7 +1165,6 @@ projects:
 	Ok(t, err)
 
 	When(workingDir.Clone(
-		Any[logging.SimpleLogging](),
 		Any[models.Repo](),
 		Any[models.PullRequest](),
 		Any[string]())).ThenReturn(repoDir, false, nil)
@@ -995,6 +1181,8 @@ projects:
 	}
 	logger := logging.NewNoopLogger(t)
 	scope, _, _ := metrics.NewLoggingScope(logger, "atlantis")
+	userConfig := defaultUserConfig
+
 	terraformClient := terraform_mocks.NewMockClient()
 	When(terraformClient.ListAvailableVersions(Any[logging.SimpleLogging]())).ThenReturn([]string{}, nil)
 
@@ -1008,12 +1196,16 @@ projects:
 		valid.NewGlobalCfgFromArgs(globalCfgArgs),
 		&events.DefaultPendingPlanFinder{},
 		&events.CommentParser{ExecutableName: "atlantis"},
-		false,
-		false,
-		"",
-		"**/*.tf,**/*.tfvars,**/*.tfvars.json,**/terragrunt.hcl,**/.terraform.lock.hcl",
-		false,
-		false,
+		userConfig.SkipCloneNoChanges,
+		userConfig.EnableRegExpCmd,
+		userConfig.EnableAutoMerge,
+		userConfig.EnableParallelPlan,
+		userConfig.EnableParallelApply,
+		userConfig.AutoDetectModuleFiles,
+		userConfig.AutoplanFileList,
+		userConfig.RestrictFileList,
+		userConfig.SilenceNoProjects,
+		userConfig.IncludeGitUntrackedFiles,
 		scope,
 		logger,
 		terraformClient,
@@ -1059,6 +1251,7 @@ func TestDefaultProjectCommandBuilder_EscapeArgs(t *testing.T) {
 
 	logger := logging.NewNoopLogger(t)
 	scope, _, _ := metrics.NewLoggingScope(logger, "atlantis")
+	userConfig := defaultUserConfig
 
 	for _, c := range cases {
 		t.Run(strings.Join(c.ExtraArgs, " "), func(t *testing.T) {
@@ -1068,7 +1261,7 @@ func TestDefaultProjectCommandBuilder_EscapeArgs(t *testing.T) {
 			})
 
 			workingDir := mocks.NewMockWorkingDir()
-			When(workingDir.Clone(Any[logging.SimpleLogging](), Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
+			When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
 			When(workingDir.GetWorkingDir(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, nil)
 			vcsClient := vcsmocks.NewMockClient()
 			When(vcsClient.GetModifiedFiles(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn([]string{"main.tf"}, nil)
@@ -1093,12 +1286,16 @@ func TestDefaultProjectCommandBuilder_EscapeArgs(t *testing.T) {
 				valid.NewGlobalCfgFromArgs(globalCfgArgs),
 				&events.DefaultPendingPlanFinder{},
 				&events.CommentParser{ExecutableName: "atlantis"},
-				false,
-				false,
-				"",
-				"**/*.tf,**/*.tfvars,**/*.tfvars.json,**/terragrunt.hcl,**/.terraform.lock.hcl",
-				false,
-				false,
+				userConfig.SkipCloneNoChanges,
+				userConfig.EnableRegExpCmd,
+				userConfig.EnableAutoMerge,
+				userConfig.EnableParallelPlan,
+				userConfig.EnableParallelApply,
+				userConfig.AutoDetectModuleFiles,
+				userConfig.AutoplanFileList,
+				userConfig.RestrictFileList,
+				userConfig.SilenceNoProjects,
+				userConfig.IncludeGitUntrackedFiles,
 				scope,
 				logger,
 				terraformClient,
@@ -1210,6 +1407,7 @@ projects:
 
 	logger := logging.NewNoopLogger(t)
 	scope, _, _ := metrics.NewLoggingScope(logger, "atlantis")
+	userConfig := defaultUserConfig
 
 	for name, testCase := range testCases {
 		t.Run(name, func(t *testing.T) {
@@ -1222,7 +1420,6 @@ projects:
 
 			workingDir := mocks.NewMockWorkingDir()
 			When(workingDir.Clone(
-				Any[logging.SimpleLogging](),
 				Any[models.Repo](),
 				Any[models.PullRequest](),
 				Any[string]())).ThenReturn(tmpDir, false, nil)
@@ -1260,12 +1457,16 @@ projects:
 				valid.NewGlobalCfgFromArgs(globalCfgArgs),
 				&events.DefaultPendingPlanFinder{},
 				&events.CommentParser{ExecutableName: "atlantis"},
-				false,
-				false,
-				"",
-				"**/*.tf,**/*.tfvars,**/*.tfvars.json,**/terragrunt.hcl,**/.terraform.lock.hcl",
-				false,
-				false,
+				userConfig.SkipCloneNoChanges,
+				userConfig.EnableRegExpCmd,
+				userConfig.EnableAutoMerge,
+				userConfig.EnableParallelPlan,
+				userConfig.EnableParallelApply,
+				userConfig.AutoDetectModuleFiles,
+				userConfig.AutoplanFileList,
+				userConfig.RestrictFileList,
+				userConfig.SilenceNoProjects,
+				userConfig.IncludeGitUntrackedFiles,
 				scope,
 				logger,
 				terraformClient,
@@ -1324,6 +1525,9 @@ parallel_plan: true`,
 		},
 	}
 
+	userConfig := defaultUserConfig
+	userConfig.SkipCloneNoChanges = true
+
 	for _, c := range cases {
 		RegisterMockTestingT(t)
 		vcsClient := vcsmocks.NewMockClient()
@@ -1354,12 +1558,16 @@ parallel_plan: true`,
 			valid.NewGlobalCfgFromArgs(globalCfgArgs),
 			&events.DefaultPendingPlanFinder{},
 			&events.CommentParser{ExecutableName: "atlantis"},
-			true,
-			false,
-			"",
-			"**/*.tf,**/*.tfvars,**/*.tfvars.json,**/terragrunt.hcl,**/.terraform.lock.hcl",
-			false,
-			false,
+			userConfig.SkipCloneNoChanges,
+			userConfig.EnableRegExpCmd,
+			userConfig.EnableAutoMerge,
+			userConfig.EnableParallelPlan,
+			userConfig.EnableParallelApply,
+			userConfig.AutoDetectModuleFiles,
+			userConfig.AutoplanFileList,
+			userConfig.RestrictFileList,
+			userConfig.SilenceNoProjects,
+			userConfig.IncludeGitUntrackedFiles,
 			scope,
 			logger,
 			terraformClient,
@@ -1379,7 +1587,7 @@ parallel_plan: true`,
 		})
 		Ok(t, err)
 		Equals(t, c.ExpectedCtxs, len(actCtxs))
-		workingDir.VerifyWasCalled(c.ExpectedClones).Clone(Any[logging.SimpleLogging](), Any[models.Repo](), Any[models.PullRequest](), Any[string]())
+		workingDir.VerifyWasCalled(c.ExpectedClones).Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())
 	}
 }
 
@@ -1391,17 +1599,19 @@ func TestDefaultProjectCommandBuilder_WithPolicyCheckEnabled_BuildAutoplanComman
 
 	logger := logging.NewNoopLogger(t)
 	scope, _, _ := metrics.NewLoggingScope(logger, "atlantis")
+	userConfig := defaultUserConfig
 
 	workingDir := mocks.NewMockWorkingDir()
-	When(workingDir.Clone(Any[logging.SimpleLogging](), Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
+	When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
 	vcsClient := vcsmocks.NewMockClient()
 	When(vcsClient.GetModifiedFiles(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn([]string{"main.tf"}, nil)
 
 	globalCfgArgs := valid.GlobalCfgArgs{
-		AllowRepoCfg:  false,
-		MergeableReq:  false,
-		ApprovedReq:   false,
-		UnDivergedReq: false,
+		AllowRepoCfg:       false,
+		MergeableReq:       false,
+		ApprovedReq:        false,
+		UnDivergedReq:      false,
+		PolicyCheckEnabled: true,
 	}
 
 	globalCfg := valid.NewGlobalCfgFromArgs(globalCfgArgs)
@@ -1418,12 +1628,16 @@ func TestDefaultProjectCommandBuilder_WithPolicyCheckEnabled_BuildAutoplanComman
 		globalCfg,
 		&events.DefaultPendingPlanFinder{},
 		&events.CommentParser{ExecutableName: "atlantis"},
-		false,
-		false,
-		"",
-		"**/*.tf,**/*.tfvars,**/*.tfvars.json,**/terragrunt.hcl,**/.terraform.lock.hcl",
-		false,
-		false,
+		userConfig.SkipCloneNoChanges,
+		userConfig.EnableRegExpCmd,
+		userConfig.EnableAutoMerge,
+		userConfig.EnableParallelPlan,
+		userConfig.EnableParallelApply,
+		userConfig.AutoDetectModuleFiles,
+		userConfig.AutoplanFileList,
+		userConfig.RestrictFileList,
+		userConfig.SilenceNoProjects,
+		userConfig.IncludeGitUntrackedFiles,
 		scope,
 		logger,
 		terraformClient,
@@ -1485,6 +1699,7 @@ func TestDefaultProjectCommandBuilder_BuildVersionCommand(t *testing.T) {
 
 	logger := logging.NewNoopLogger(t)
 	scope, _, _ := metrics.NewLoggingScope(logger, "atlantis")
+	userConfig := defaultUserConfig
 
 	globalCfgArgs := valid.GlobalCfgArgs{
 		AllowRepoCfg:  false,
@@ -1505,12 +1720,16 @@ func TestDefaultProjectCommandBuilder_BuildVersionCommand(t *testing.T) {
 		valid.NewGlobalCfgFromArgs(globalCfgArgs),
 		&events.DefaultPendingPlanFinder{},
 		&events.CommentParser{ExecutableName: "atlantis"},
-		false,
-		false,
-		"",
-		"**/*.tf,**/*.tfvars,**/*.tfvars.json,**/terragrunt.hcl,**/.terraform.lock.hcl",
-		false,
-		false,
+		userConfig.SkipCloneNoChanges,
+		userConfig.EnableRegExpCmd,
+		userConfig.EnableAutoMerge,
+		userConfig.EnableParallelPlan,
+		userConfig.EnableParallelApply,
+		userConfig.AutoDetectModuleFiles,
+		userConfig.AutoplanFileList,
+		userConfig.RestrictFileList,
+		userConfig.SilenceNoProjects,
+		userConfig.IncludeGitUntrackedFiles,
 		scope,
 		logger,
 		terraformClient,
@@ -1539,4 +1758,239 @@ func TestDefaultProjectCommandBuilder_BuildVersionCommand(t *testing.T) {
 	Equals(t, "workspace2", ctxs[2].Workspace)
 	Equals(t, "project2", ctxs[3].RepoRelDir)
 	Equals(t, "workspace2", ctxs[3].Workspace)
+}
+
+// Test
+func TestDefaultProjectCommandBuilder_BuildPlanCommands_Single_With_RestrictFileList_And_IncludeGitUntrackedFiles(t *testing.T) {
+	testDir1 := "directory-1"
+	testDir2 := "directory-2"
+
+	cases := []struct {
+		Description        string
+		AtlantisYAML       string
+		DirectoryStructure map[string]interface{}
+		ModifiedFiles      []string
+		UntrackedFiles     []string
+		Cmd                events.CommentCommand
+		ExpRepoRelDir      string
+		ExpErr             string
+	}{
+		{
+			Description: "planning a git untracked file project in a modified directory",
+			Cmd: events.CommentCommand{
+				Name:       command.Plan,
+				RepoRelDir: testDir1 + "/ci-cdktf.out/stacks/test",
+				Workspace:  "default",
+			},
+			DirectoryStructure: map[string]interface{}{
+				testDir1: map[string]interface{}{
+					"main.ts": nil,
+				},
+			},
+			ModifiedFiles:  []string{testDir1 + "/main.ts"},
+			UntrackedFiles: []string{testDir1 + "/ci-cdktf.out/stacks/test/cdk.tf.json"},
+			ExpRepoRelDir:  testDir1 + "/ci-cdktf.out/stacks/test",
+		},
+		{
+			Description: "planning a git untracked file project outside a modified directory",
+			Cmd: events.CommentCommand{
+				Name:       command.Plan,
+				RepoRelDir: testDir2 + "/ci-cdktf.out/stacks/test",
+				Workspace:  "default",
+			},
+			DirectoryStructure: map[string]interface{}{
+				testDir1: map[string]interface{}{
+					"main.ts": nil,
+				},
+			},
+			ModifiedFiles:  []string{testDir1 + "/main.ts"},
+			UntrackedFiles: []string{testDir1 + "/ci-cdktf.out/stacks/test/cdk.tf.json"},
+			ExpErr:         "the dir \"" + testDir2 + "/ci-cdktf.out/stacks/test\" is not in the plan list of this pull request",
+		},
+	}
+
+	globalCfgArgs := valid.GlobalCfgArgs{
+		AllowRepoCfg:  true,
+		MergeableReq:  false,
+		ApprovedReq:   false,
+		UnDivergedReq: false,
+	}
+
+	logger := logging.NewNoopLogger(t)
+	scope, _, _ := metrics.NewLoggingScope(logger, "atlantis")
+	userConfig := defaultUserConfig
+	userConfig.RestrictFileList = true
+	userConfig.IncludeGitUntrackedFiles = true
+
+	for _, c := range cases {
+		t.Run(c.Description+"_"+command.Plan.String(), func(t *testing.T) {
+			RegisterMockTestingT(t)
+			tmpDir := DirStructure(t, c.DirectoryStructure)
+
+			workingDir := mocks.NewMockWorkingDir()
+			When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
+			When(workingDir.GetWorkingDir(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, nil)
+			When(workingDir.GetGitUntrackedFiles(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(c.UntrackedFiles, nil)
+			vcsClient := vcsmocks.NewMockClient()
+			When(vcsClient.GetModifiedFiles(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn(c.ModifiedFiles, nil)
+			if c.AtlantisYAML != "" {
+				err := os.WriteFile(filepath.Join(tmpDir, valid.DefaultAtlantisFile), []byte(c.AtlantisYAML), 0600)
+				Ok(t, err)
+			}
+
+			terraformClient := terraform_mocks.NewMockClient()
+			When(terraformClient.ListAvailableVersions(Any[logging.SimpleLogging]())).ThenReturn([]string{}, nil)
+
+			builder := events.NewProjectCommandBuilder(
+				false, // policyChecksSupported
+				&config.ParserValidator{},
+				&events.DefaultProjectFinder{},
+				vcsClient,
+				workingDir,
+				events.NewDefaultWorkingDirLocker(),
+				valid.NewGlobalCfgFromArgs(globalCfgArgs),
+				&events.DefaultPendingPlanFinder{},
+				&events.CommentParser{ExecutableName: "atlantis"},
+				userConfig.SkipCloneNoChanges,
+				userConfig.EnableRegExpCmd,
+				userConfig.EnableAutoMerge,
+				userConfig.EnableParallelPlan,
+				userConfig.EnableParallelApply,
+				userConfig.AutoDetectModuleFiles,
+				userConfig.AutoplanFileList,
+				userConfig.RestrictFileList,
+				userConfig.SilenceNoProjects,
+				userConfig.IncludeGitUntrackedFiles,
+				scope,
+				logger,
+				terraformClient,
+			)
+
+			var actCtxs []command.ProjectContext
+			var err error
+			actCtxs, err = builder.BuildPlanCommands(&command.Context{
+				Log:   logger,
+				Scope: scope,
+			}, &c.Cmd)
+			if c.ExpErr != "" {
+				ErrEquals(t, c.ExpErr, err)
+				return
+			}
+			Ok(t, err)
+			Equals(t, 1, len(actCtxs))
+			actCtx := actCtxs[0]
+			Equals(t, c.ExpRepoRelDir, actCtx.RepoRelDir)
+		})
+	}
+}
+
+func TestDefaultProjectCommandBuilder_BuildPlanCommands_with_IncludeGitUntrackedFiles(t *testing.T) {
+	testDir1 := "directory-1"
+
+	cases := []struct {
+		Description        string
+		AtlantisYAML       string
+		DirectoryStructure map[string]interface{}
+		ModifiedFiles      []string
+		UntrackedFiles     []string
+		Cmd                events.CommentCommand
+		ExpRepoRelDir      string
+		ExpErr             string
+	}{
+		{
+			Description: "planning with a git untracked file",
+			Cmd: events.CommentCommand{
+				Name: command.Plan,
+			},
+			DirectoryStructure: map[string]interface{}{
+				testDir1: map[string]interface{}{
+					"main.ts": nil,
+					"ci-cdktf.out": map[string]interface{}{
+						"stacks": map[string]interface{}{
+							"test": map[string]interface{}{
+								"cdk.tf.json": nil,
+							},
+						},
+					},
+				},
+			},
+			ModifiedFiles:  []string{testDir1 + "/main.ts"},
+			UntrackedFiles: []string{testDir1 + "/ci-cdktf.out/stacks/test/cdk.tf.json"},
+			ExpRepoRelDir:  testDir1 + "/ci-cdktf.out/stacks/test",
+		},
+	}
+
+	globalCfgArgs := valid.GlobalCfgArgs{
+		AllowRepoCfg:  true,
+		MergeableReq:  false,
+		ApprovedReq:   false,
+		UnDivergedReq: false,
+	}
+
+	logger := logging.NewNoopLogger(t)
+	scope, _, _ := metrics.NewLoggingScope(logger, "atlantis")
+	userConfig := defaultUserConfig
+	userConfig.IncludeGitUntrackedFiles = true
+	userConfig.AutoplanFileList = "**/cdk.tf.json"
+
+	for _, c := range cases {
+		t.Run(c.Description+"_"+command.Plan.String(), func(t *testing.T) {
+			RegisterMockTestingT(t)
+			tmpDir := DirStructure(t, c.DirectoryStructure)
+
+			workingDir := mocks.NewMockWorkingDir()
+			When(workingDir.Clone(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, false, nil)
+			When(workingDir.GetWorkingDir(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(tmpDir, nil)
+			When(workingDir.GetGitUntrackedFiles(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(c.UntrackedFiles, nil)
+			vcsClient := vcsmocks.NewMockClient()
+			When(vcsClient.GetModifiedFiles(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn(c.ModifiedFiles, nil)
+			if c.AtlantisYAML != "" {
+				err := os.WriteFile(filepath.Join(tmpDir, valid.DefaultAtlantisFile), []byte(c.AtlantisYAML), 0600)
+				Ok(t, err)
+			}
+
+			terraformClient := terraform_mocks.NewMockClient()
+			When(terraformClient.ListAvailableVersions(Any[logging.SimpleLogging]())).ThenReturn([]string{}, nil)
+
+			builder := events.NewProjectCommandBuilder(
+				false, // policyChecksSupported
+				&config.ParserValidator{},
+				&events.DefaultProjectFinder{},
+				vcsClient,
+				workingDir,
+				events.NewDefaultWorkingDirLocker(),
+				valid.NewGlobalCfgFromArgs(globalCfgArgs),
+				&events.DefaultPendingPlanFinder{},
+				&events.CommentParser{ExecutableName: "atlantis"},
+				userConfig.SkipCloneNoChanges,
+				userConfig.EnableRegExpCmd,
+				userConfig.EnableAutoMerge,
+				userConfig.EnableParallelPlan,
+				userConfig.EnableParallelApply,
+				userConfig.AutoDetectModuleFiles,
+				userConfig.AutoplanFileList,
+				userConfig.RestrictFileList,
+				userConfig.SilenceNoProjects,
+				userConfig.IncludeGitUntrackedFiles,
+				scope,
+				logger,
+				terraformClient,
+			)
+
+			var actCtxs []command.ProjectContext
+			var err error
+			actCtxs, err = builder.BuildPlanCommands(&command.Context{
+				Log:   logger,
+				Scope: scope,
+			}, &c.Cmd)
+			if c.ExpErr != "" {
+				ErrEquals(t, c.ExpErr, err)
+				return
+			}
+			Ok(t, err)
+			Equals(t, 1, len(actCtxs))
+			actCtx := actCtxs[0]
+			Equals(t, c.ExpRepoRelDir, actCtx.RepoRelDir)
+		})
+	}
 }
