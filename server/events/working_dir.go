@@ -31,6 +31,7 @@ import (
 const workingDirPrefix = "repos"
 
 var cloneLocks sync.Map
+var recheckRequiredMap sync.Map
 
 //go:generate pegomock generate github.com/runatlantis/atlantis/server/events --package mocks -o mocks/mock_working_dir.go WorkingDir
 //go:generate pegomock generate github.com/runatlantis/atlantis/server/events --package events WorkingDir
@@ -41,7 +42,7 @@ type WorkingDir interface {
 	// absolute path to the root of the cloned repo. It also returns
 	// a boolean indicating if we should warn users that the branch we're
 	// merging into has been updated since we cloned it.
-	Clone(headRepo models.Repo, p models.PullRequest, workspace string) (string, bool, error)
+	Clone(headRepo models.Repo, p models.PullRequest, workspace string, shouldRecheckUpstream bool) (string, bool, error)
 	// GetWorkingDir returns the path to the workspace for this repo and pull.
 	// If workspace does not exist on disk, error will be of type os.IsNotExist.
 	GetWorkingDir(r models.Repo, p models.PullRequest, workspace string) (string, error)
@@ -50,10 +51,6 @@ type WorkingDir interface {
 	// Delete deletes the workspace for this repo and pull.
 	Delete(r models.Repo, p models.PullRequest) error
 	DeleteForWorkspace(r models.Repo, p models.PullRequest, workspace string) error
-	// Set a flag in the workingdir so Clone() can know that it is safe to re-clone the workingdir if
-	// the upstream branch has been modified. This is only safe after grabbing the project lock
-	// and before running any plans
-	SetSafeToReClone()
 	// DeletePlan deletes the plan for this repo, pull, workspace path and project name
 	DeletePlan(r models.Repo, p models.PullRequest, workspace string, path string, projectName string) error
 	// GetGitUntrackedFiles returns a list of Git untracked files in the working dir.
@@ -84,9 +81,7 @@ type FileWorkspace struct {
 	GithubAppEnabled bool
 	// use the global setting without overriding
 	GpgNoSigningEnabled bool
-	// flag indicating if a re-clone will be safe (project lock held, about to run plan)
-	SafeToReClone bool
-	Logger        logging.SimpleLogging
+	Logger              logging.SimpleLogging
 }
 
 // Clone git clones headRepo, checks out the branch and then returns the absolute
@@ -98,11 +93,35 @@ type FileWorkspace struct {
 func (w *FileWorkspace) Clone(
 	headRepo models.Repo,
 	p models.PullRequest,
-	workspace string) (string, bool, error) {
+	workspace string,
+	mustRecheckUpstream bool) (string, bool, error) {
 	cloneDir := w.cloneDir(p.BaseRepo, p, workspace)
-	hasDiverged := false
-	defer func() { w.SafeToReClone = false }()
 
+	// Disable the mustRecheckUpstream flag if we are not using the merge checkout strategy
+	mustRecheckUpstream = mustRecheckUpstream && w.CheckoutMerge
+
+	if mustRecheckUpstream {
+		// We atomically set the recheckRequiredMap flag here before grabbing the clone lock.
+		// If the flag is cleared after we grab the lock, it means some other thread
+		// did the necessary work late enough that we do not have to do it again.
+		recheckRequiredMap.Store(cloneDir, struct{}{})
+	}
+
+	// Unconditionally wait for the clone lock here, if anyone else is doing any clone
+	// operation in this directory, we wait for it to finish before we check anything.
+	value, _ := cloneLocks.LoadOrStore(cloneDir, new(sync.Mutex))
+	mutex := value.(*sync.Mutex)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	if mustRecheckUpstream {
+		if _, exists := recheckRequiredMap.Load(cloneDir); !exists {
+			mustRecheckUpstream = false
+			w.Logger.Debug("Skipping upstream check. Some other thread has done this for us")
+		}
+	}
+
+	c := wrappedGitContext{cloneDir, headRepo, p}
 	// If the directory already exists, check if it's at the right commit.
 	// If so, then we do nothing.
 	if _, err := os.Stat(cloneDir); err == nil {
@@ -122,20 +141,24 @@ func (w *FileWorkspace) Clone(
 		outputRevParseCmd, err := revParseCmd.CombinedOutput()
 		if err != nil {
 			w.Logger.Warn("will re-clone repo, could not determine if was at correct commit: %s: %s: %s", strings.Join(revParseCmd.Args, " "), err, string(outputRevParseCmd))
-			return cloneDir, false, w.forceClone(cloneDir, headRepo, p)
+			return cloneDir, false, w.forceClone(c)
 		}
 		currCommit := strings.Trim(string(outputRevParseCmd), "\n")
 
 		// We're prefix matching here because BitBucket doesn't give us the full
 		// commit, only a 12 character prefix.
 		if strings.HasPrefix(currCommit, p.HeadCommit) {
-			if w.SafeToReClone && w.CheckoutMerge && w.recheckDiverged(p, headRepo, cloneDir) {
-				w.Logger.Info("base branch has been updated, using merge strategy and will clone again")
-				hasDiverged = true
+			if mustRecheckUpstream {
+				recheckRequiredMap.Delete(cloneDir)
+				if w.recheckDiverged(p, headRepo, cloneDir) {
+					w.Logger.Info("base branch has been updated, using merge strategy and will merge again")
+					return cloneDir, true, w.mergeAgain(c)
+				}
+				w.Logger.Debug("repo is at correct commit %q and there are no upstream changes", p.HeadCommit)
 			} else {
 				w.Logger.Debug("repo is at correct commit %q so will not re-clone", p.HeadCommit)
-				return cloneDir, false, nil
 			}
+			return cloneDir, false, nil
 		} else {
 			w.Logger.Debug("repo was already cloned but is not at correct commit, wanted %q got %q", p.HeadCommit, currCommit)
 		}
@@ -143,7 +166,7 @@ func (w *FileWorkspace) Clone(
 	}
 
 	// Otherwise we clone the repo.
-	return cloneDir, hasDiverged, w.forceClone(cloneDir, headRepo, p)
+	return cloneDir, false, w.forceClone(c)
 }
 
 // recheckDiverged returns true if the branch we're merging into has diverged
@@ -212,107 +235,123 @@ func (w *FileWorkspace) HasDiverged(cloneDir string) bool {
 	return hasDiverged
 }
 
-func (w *FileWorkspace) forceClone(cloneDir string, headRepo models.Repo, p models.PullRequest) error {
-	value, _ := cloneLocks.LoadOrStore(cloneDir, new(sync.Mutex))
-	mutex := value.(*sync.Mutex)
-
-	defer mutex.Unlock()
-	if locked := mutex.TryLock(); !locked {
-		mutex.Lock()
-		return nil
-	}
-
-	err := os.RemoveAll(cloneDir)
+func (w *FileWorkspace) forceClone(c wrappedGitContext) error {
+	err := os.RemoveAll(c.dir)
 	if err != nil {
-		return errors.Wrapf(err, "deleting dir %q before cloning", cloneDir)
+		return errors.Wrapf(err, "deleting dir %q before cloning", c.dir)
 	}
 
 	// Create the directory and parents if necessary.
-	w.Logger.Info("creating dir %q", cloneDir)
-	if err := os.MkdirAll(cloneDir, 0700); err != nil {
+	w.Logger.Info("creating dir %q", c.dir)
+	if err := os.MkdirAll(c.dir, 0700); err != nil {
 		return errors.Wrap(err, "creating new workspace")
 	}
 
 	// During testing, we mock some of this out.
-	headCloneURL := headRepo.CloneURL
+	headCloneURL := c.head.CloneURL
 	if w.TestingOverrideHeadCloneURL != "" {
 		headCloneURL = w.TestingOverrideHeadCloneURL
 	}
-	baseCloneURL := p.BaseRepo.CloneURL
+	baseCloneURL := c.pr.BaseRepo.CloneURL
 	if w.TestingOverrideBaseCloneURL != "" {
 		baseCloneURL = w.TestingOverrideBaseCloneURL
 	}
 
-	runGit := func(args ...string) error {
-		cmd := exec.Command("git", args...) // nolint: gosec
-		cmd.Dir = cloneDir
-		// The git merge command requires these env vars are set.
-		cmd.Env = append(os.Environ(), []string{
-			"EMAIL=atlantis@runatlantis.io",
-			"GIT_AUTHOR_NAME=atlantis",
-			"GIT_COMMITTER_NAME=atlantis",
-		}...)
-
-		cmdStr := w.sanitizeGitCredentials(strings.Join(cmd.Args, " "), p.BaseRepo, headRepo)
-		output, err := cmd.CombinedOutput()
-		sanitizedOutput := w.sanitizeGitCredentials(string(output), p.BaseRepo, headRepo)
-		if err != nil {
-			sanitizedErrMsg := w.sanitizeGitCredentials(err.Error(), p.BaseRepo, headRepo)
-			return fmt.Errorf("running %s: %s: %s", cmdStr, sanitizedOutput, sanitizedErrMsg)
-		}
-		w.Logger.Debug("ran: %s. Output: %s", cmdStr, strings.TrimSuffix(sanitizedOutput, "\n"))
-		return nil
-	}
-
 	// if branch strategy, use depth=1
 	if !w.CheckoutMerge {
-		return runGit("clone", "--depth=1", "--branch", p.HeadBranch, "--single-branch", headCloneURL, cloneDir)
+		return w.wrappedGit(c, "clone", "--depth=1", "--branch", c.pr.HeadBranch, "--single-branch", headCloneURL, c.dir)
 	}
 
 	// if merge strategy...
 
 	// if no checkout depth, omit depth arg
 	if w.CheckoutDepth == 0 {
-		if err := runGit("clone", "--branch", p.BaseBranch, "--single-branch", baseCloneURL, cloneDir); err != nil {
+		if err := w.wrappedGit(c, "clone", "--branch", c.pr.BaseBranch, "--single-branch", baseCloneURL, c.dir); err != nil {
 			return err
 		}
 	} else {
-		if err := runGit("clone", "--depth", fmt.Sprint(w.CheckoutDepth), "--branch", p.BaseBranch, "--single-branch", baseCloneURL, cloneDir); err != nil {
+		if err := w.wrappedGit(c, "clone", "--depth", fmt.Sprint(w.CheckoutDepth), "--branch", c.pr.BaseBranch, "--single-branch", baseCloneURL, c.dir); err != nil {
 			return err
 		}
 	}
 
-	if err := runGit("remote", "add", "head", headCloneURL); err != nil {
+	if err := w.wrappedGit(c, "remote", "add", "head", headCloneURL); err != nil {
+		return err
+	}
+	if w.GpgNoSigningEnabled {
+		if err := w.wrappedGit(c, "config", "--local", "commit.gpgsign", "false"); err != nil {
+			return err
+		}
+	}
+
+	return w.mergeToBaseBranch(c)
+}
+
+// There is a new upstream update that we need, and we want to update to it
+// without deleting any existing plans
+func (w *FileWorkspace) mergeAgain(c wrappedGitContext) error {
+	// Reset branch as if it was cloned again
+	if err := w.wrappedGit(c, "reset", "--hard", fmt.Sprintf("refs/remotes/head/%s", c.pr.BaseBranch)); err != nil {
 		return err
 	}
 
-	fetchRef := fmt.Sprintf("+refs/heads/%s:", p.HeadBranch)
+	return w.mergeToBaseBranch(c)
+}
+
+// wrappedGitContext is the configuration for wrappedGit that is typically unchanged
+// for a series of calls to wrappedGit
+type wrappedGitContext struct {
+	dir  string
+	head models.Repo
+	pr   models.PullRequest
+}
+
+// wrappedGit runs git with additional environment settings required for git merge,
+// and with sanitized error logging to avoid leaking git credentials
+func (w *FileWorkspace) wrappedGit(c wrappedGitContext, args ...string) error {
+	cmd := exec.Command("git", args...) // nolint: gosec
+	cmd.Dir = c.dir
+	// The git merge command requires these env vars are set.
+	cmd.Env = append(os.Environ(), []string{
+		"EMAIL=atlantis@runatlantis.io",
+		"GIT_AUTHOR_NAME=atlantis",
+		"GIT_COMMITTER_NAME=atlantis",
+	}...)
+	cmdStr := w.sanitizeGitCredentials(strings.Join(cmd.Args, " "), c.pr.BaseRepo, c.head)
+	output, err := cmd.CombinedOutput()
+	sanitizedOutput := w.sanitizeGitCredentials(string(output), c.pr.BaseRepo, c.head)
+	if err != nil {
+		sanitizedErrMsg := w.sanitizeGitCredentials(err.Error(), c.pr.BaseRepo, c.head)
+		return fmt.Errorf("running %s: %s: %s", cmdStr, sanitizedOutput, sanitizedErrMsg)
+	}
+	w.Logger.Debug("ran: %s. Output: %s", cmdStr, strings.TrimSuffix(sanitizedOutput, "\n"))
+	return nil
+}
+
+// Merge the PR into the base branch.
+func (w *FileWorkspace) mergeToBaseBranch(c wrappedGitContext) error {
+	fetchRef := fmt.Sprintf("+refs/heads/%s:", c.pr.HeadBranch)
 	fetchRemote := "head"
 	if w.GithubAppEnabled {
-		fetchRef = fmt.Sprintf("pull/%d/head:", p.Num)
+		fetchRef = fmt.Sprintf("pull/%d/head:", c.pr.Num)
 		fetchRemote = "origin"
 	}
 
 	// if no checkout depth, omit depth arg
 	if w.CheckoutDepth == 0 {
-		if err := runGit("fetch", fetchRemote, fetchRef); err != nil {
+		if err := w.wrappedGit(c, "fetch", fetchRemote, fetchRef); err != nil {
 			return err
 		}
 	} else {
-		if err := runGit("fetch", "--depth", fmt.Sprint(w.CheckoutDepth), fetchRemote, fetchRef); err != nil {
+		if err := w.wrappedGit(c, "fetch", "--depth", fmt.Sprint(w.CheckoutDepth), fetchRemote, fetchRef); err != nil {
 			return err
 		}
 	}
 
-	if w.GpgNoSigningEnabled {
-		if err := runGit("config", "--local", "commit.gpgsign", "false"); err != nil {
-			return err
-		}
-	}
-	if err := runGit("merge-base", p.BaseBranch, "FETCH_HEAD"); err != nil {
+	if err := w.wrappedGit(c, "merge-base", c.pr.BaseBranch, "FETCH_HEAD"); err != nil {
 		// git merge-base returning error means that we did not receive enough commits in shallow clone.
 		// Fall back to retrieving full repo history.
-		if err := runGit("fetch", "--unshallow"); err != nil {
+		if err := w.wrappedGit(c, "fetch", "--unshallow"); err != nil {
 			return err
 		}
 	}
@@ -323,7 +362,7 @@ func (w *FileWorkspace) forceClone(cloneDir string, headRepo models.Repo, p mode
 	// git rev-parse HEAD^2 to get the head commit because it will
 	// always succeed whereas without --no-ff, if the merge was fast
 	// forwarded then git rev-parse HEAD^2 would fail.
-	return runGit("merge", "-q", "--no-ff", "-m", "atlantis-merge", "FETCH_HEAD")
+	return w.wrappedGit(c, "merge", "-q", "--no-ff", "-m", "atlantis-merge", "FETCH_HEAD")
 }
 
 // GetWorkingDir returns the path to the workspace for this repo and pull.
@@ -372,11 +411,6 @@ func (w *FileWorkspace) cloneDir(r models.Repo, p models.PullRequest, workspace 
 func (w *FileWorkspace) sanitizeGitCredentials(s string, base models.Repo, head models.Repo) string {
 	baseReplaced := strings.Replace(s, base.CloneURL, base.SanitizedCloneURL, -1)
 	return strings.Replace(baseReplaced, head.CloneURL, head.SanitizedCloneURL, -1)
-}
-
-// Set the flag that indicates it is safe to re-clone if necessary
-func (w *FileWorkspace) SetSafeToReClone() {
-	w.SafeToReClone = true
 }
 
 func (w *FileWorkspace) DeletePlan(r models.Repo, p models.PullRequest, workspace string, projectPath string, projectName string) error {
