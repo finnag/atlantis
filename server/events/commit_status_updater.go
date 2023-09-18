@@ -31,7 +31,7 @@ import (
 type CommitStatusUpdater interface {
 	// UpdateCombined updates the combined status of the head commit of pull.
 	// A combined status represents all the projects modified in the pull.
-	UpdateCombined(repo models.Repo, pull models.PullRequest, status models.CommitStatus, cmdName command.Name) error
+	UpdateCombined(ctx *command.Context, repo models.Repo, pull models.PullRequest, status models.CommitStatus, cmdName command.Name) error
 	// UpdateCombinedCount updates the combined status to reflect the
 	// numSuccess out of numTotal.
 	UpdateCombinedCount(repo models.Repo, pull models.PullRequest, status models.CommitStatus, cmdName command.Name, numSuccess int, numTotal int) error
@@ -51,11 +51,14 @@ type DefaultCommitStatusUpdater struct {
 // cause runtime.StatusUpdater is extracted for resolving circular dependency
 var _ runtime.StatusUpdater = (*DefaultCommitStatusUpdater)(nil)
 
-func (d *DefaultCommitStatusUpdater) UpdateCombined(repo models.Repo, pull models.PullRequest, status models.CommitStatus, cmdName command.Name) error {
+func (d *DefaultCommitStatusUpdater) UpdateCombined(ctx *command.Context, repo models.Repo, pull models.PullRequest, status models.CommitStatus, cmdName command.Name) error {
 	src := fmt.Sprintf("%s/%s", d.StatusName, cmdName.String())
 	var descripWords string
 	switch status {
 	case models.PendingCommitStatus:
+		if cmdName == command.PolicyCheck {
+			ctx.Log.Warn("Setting status to pending for policy check") // Warn includes a stacktrace
+		}
 		descripWords = genProjectStatusDescription(cmdName.String(), "in progress...")
 	case models.FailedCommitStatus:
 		descripWords = genProjectStatusDescription(cmdName.String(), "failed.")

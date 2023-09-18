@@ -280,7 +280,7 @@ func (m *MockCSU) UpdateCombinedCount(repo models.Repo, pull models.PullRequest,
 	return nil
 }
 
-func (m *MockCSU) UpdateCombined(repo models.Repo, pull models.PullRequest, status models.CommitStatus, command command.Name) error {
+func (m *MockCSU) UpdateCombined(ctx *command.Context, repo models.Repo, pull models.PullRequest, status models.CommitStatus, command command.Name) error {
 	return nil
 }
 

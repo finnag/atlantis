@@ -65,10 +65,11 @@ func TestUpdateCombined(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.expDescrip, func(t *testing.T) {
+			ctx := command.Context{}
 			RegisterMockTestingT(t)
 			client := mocks.NewMockClient()
 			s := events.DefaultCommitStatusUpdater{Client: client, StatusName: "atlantis"}
-			err := s.UpdateCombined(models.Repo{}, models.PullRequest{}, c.status, c.command)
+			err := s.UpdateCombined(&ctx, models.Repo{}, models.PullRequest{}, c.status, c.command)
 			Ok(t, err)
 
 			expSrc := fmt.Sprintf("atlantis/%s", c.command)
