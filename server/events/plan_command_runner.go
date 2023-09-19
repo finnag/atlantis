@@ -229,11 +229,13 @@ func (p *PlanCommandRunner) run(ctx *command.Context, cmd *CommentCommand) {
 				if err := p.commitStatusUpdater.UpdateCombinedCount(ctx.Log, baseRepo, pull, models.SuccessCommitStatus, cmd.Name, 0, 0); err != nil {
 					ctx.Log.Warn("unable to update commit status: %s", err)
 				}
-				if err := p.commitStatusUpdater.UpdateCombinedCount(ctx.Log, baseRepo, pull, models.SuccessCommitStatus, command.PolicyCheck, 0, 0); err != nil {
-					ctx.Log.Warn("unable to update commit status: %s", err)
-				}
-				if err := p.commitStatusUpdater.UpdateCombinedCount(ctx.Log, baseRepo, pull, models.SuccessCommitStatus, command.Apply, 0, 0); err != nil {
-					ctx.Log.Warn("unable to update commit status: %s", err)
+				if cmd.Name == command.Plan {
+					if err := p.commitStatusUpdater.UpdateCombinedCount(ctx.Log, baseRepo, pull, models.SuccessCommitStatus, command.PolicyCheck, 0, 0); err != nil {
+						ctx.Log.Warn("unable to update commit status: %s", err)
+					}
+					if err := p.commitStatusUpdater.UpdateCombinedCount(ctx.Log, baseRepo, pull, models.SuccessCommitStatus, command.Apply, 0, 0); err != nil {
+						ctx.Log.Warn("unable to update commit status: %s", err)
+					}
 				}
 			}
 		}
@@ -280,15 +282,17 @@ func (p *PlanCommandRunner) run(ctx *command.Context, cmd *CommentCommand) {
 	}
 
 	p.updateCommitStatus(ctx, pullStatus, cmd.Name)
-	p.updateCommitStatus(ctx, pullStatus, command.Apply)
+	if cmd.Name == command.Plan {
+		p.updateCommitStatus(ctx, pullStatus, command.Apply)
+	}
 
 	// Runs policy checks step after all plans are successful.
 	// This step does not approve any policies that require approval.
-	if cmd.Name != command.DraftPlan && len(result.ProjectResults) > 0 &&
+	if cmd.Name == command.Plan && len(result.ProjectResults) > 0 &&
 		!(result.HasErrors() || result.PlansDeleted) {
 		ctx.Log.Info("Running policy check for %s", cmd.String())
 		p.policyCheckCommandRunner.Run(ctx, policyCheckCmds)
-	} else if len(projectCmds) == 0 && !cmd.IsForSpecificProject() {
+	} else if len(projectCmds) == 0 && cmd.Name == command.Plan && !cmd.IsForSpecificProject() {
 		// If there were no projects modified, we set successful commit statuses
 		// with 0/0 projects planned/policy_checked/applied successfully because some users require
 		// the Atlantis status to be passing for all pull requests.
